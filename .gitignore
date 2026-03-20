@@ -1,0 +1,13 @@
+# Dependency folder (Do not upload, Railway installs this automatically)
+node_modules/
+
+# Environment variables (If you use them later)
+.env
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Optional: If you want to keep your credentials extra safe 
+# and use Railway variables instead, uncomment the line below:
+# credentials.json
