@@ -1,7 +1,9 @@
-const { google } = require('googleapis');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+
+const SHEET_ID = "1ctn-Ay3n4EZ-BY3hyEvKmC9vfgIRNiMO7_1RQu-NC-A";
 
 const TABS_CONFIG = {
-    "⭐STAFF TEAM":      { updateCols: ['D', 'G', 'J'], timeCol: 'N' },
+    "⭐STAFF TEAM":     { updateCols: ['D', 'G', 'J'], timeCol: 'N' },
     "👑 VULCAN":         { updateCols: ['D', 'F', 'I'], timeCol: 'K' },
     "❄️ BLIZZARD FORCE": { updateCols: ['D', 'F', 'I'], timeCol: 'K' },
     "🔥 WILDFIRE ":      { updateCols: ['D', 'F', 'I'], timeCol: 'K' },
@@ -9,7 +11,6 @@ const TABS_CONFIG = {
     "💂RECRUITS":        { updateCols: ['D', 'E', 'F'], timeCol: 'G' }
 };
 
-// --- UTILITIES ---
 function normalizeName(name) {
     if (!name) return "";
     let n = name.toString().split('|')[0].trim().normalize('NFKC');
@@ -23,58 +24,46 @@ function normalizeName(name) {
 
 function extractNames(text) {
     if (!text || /^(N\/?A|None|No attendees|No one)\.?$/i.test(text.trim())) return [];
-    const TZ = ['est', 'edt', 'cst', 'cdt', 'mst', 'mdt', 'pst', 'pdt', 'gmt', 'bst', 'utc', 'aest', 'gmt1', 'gmt2', 'gmt3', 'gmt4'];
+    const TZ = ['est', 'edt', 'cst', 'cdt', 'mst', 'mdt', 'pst', 'pdt', 'gmt', 'bst', 'utc', 'aest'];
     return text.split(/[,\s\n\t|]+/).map(n => normalizeName(n)).filter(n => n && !TZ.includes(n));
 }
 
-async function modCell(sheets, spreadsheetId, tab, row, col, valToAdd) {
-    const range = `${tab}!${col}${row}`;
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-    const oldVal = parseFloat(res.data.values ? res.data.values[0][0] : 0) || 0;
-    const newVal = oldVal + valToAdd;
-    
-    await sheets.spreadsheets.values.update({
-        spreadsheetId,
-        range,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[newVal]] }
-    });
-    return `[${col}${row}]: ${oldVal} -> ${newVal}`;
+function colToIndex(col) {
+    return col.toUpperCase().charCodeAt(0) - 65;
 }
 
-async function processLog(auth, spreadsheetId, command, input) {
-    const sheets = google.sheets({ version: 'v4', auth });
-    
-    let eventType = "";
-    let data = { host: "", co_hosts: [], attendees: [], duration: 20, participants: 0, eventName: "", minutes: 0, rawInput: input };
+function updateCellManual(sheet, rowIdx, colLetter, valToAdd) {
+    const cell = sheet.getCell(rowIdx, colToIndex(colLetter));
+    const oldVal = parseFloat(cell.value) || 0;
+    const newVal = oldVal + valToAdd;
+    cell.value = newVal;
+    return `[${colLetter}${rowIdx + 1}]: ${oldVal} -> ${newVal}`;
+}
 
-    // 1. Check for Time Log first (using the more aggressive regex)
-    if (input.toLowerCase().includes("time") && !input.includes("Hosted by")) {
-        eventType = "Time Log";
-        const nameMatch = input.match(/(?:Username:\s*)?([a-zA-Z0-9_]+)(?=\s*time)/i);
-        const timeMatch = input.match(/time\s*:?\s*(\d+)/i);
-        
-        data.host = nameMatch ? normalizeName(nameMatch[1]) : "";
-        data.minutes = timeMatch ? parseInt(timeMatch[1]) : 0;
-    } 
-    // 2. Check for SSU
-    else if (input.includes("VF/ICSU Host:")) {
+async function processLog(doc, command, input) {
+    await doc.loadInfo();
+    let eventType = "";
+    let data = { host: "", co_hosts: [], attendees: [], duration: 20, participants: 0, eventName: "", minutes: 0 };
+
+    if (input.includes("VF/ICSU Host:")) {
         eventType = "SSU";
         data.host = normalizeName((input.match(/VF\/ICSU Host:\s*([^|\n]+)/i) || [])[1]);
         data.co_hosts = extractNames((input.match(/VF\/ICSU Officers:\s*([\s\S]*?)(?=VF\/ICSU Attendees:|Notes:|Proof:|$)/i) || [])[1]);
         data.attendees = extractNames((input.match(/VF\/ICSU Attendees:\s*([\s\S]*?)(?=Notes:|Proof:|$)/i) || [])[1]);
         if (/40\s*(minute|min)/i.test(input)) data.duration = 40;
     } 
-    // 3. Check for Events/Tryouts
+    else if (input.includes("Username:") && input.includes("Time:")) {
+        eventType = "Time Log";
+        data.host = normalizeName((input.match(/Username:\s*([^\n|]+)/i) || [])[1]);
+        data.minutes = parseInt((input.match(/Time:\s*(\d+)/i) || [0, 0])[1]) || 0;
+    }
     else {
         eventType = input.includes("Number of participants:") ? "Tryout" : "Event";
         data.eventName = (input.match(/Event:\s*([^.|]+)/i) || [])[1] || "";
         data.host = normalizeName((input.match(/Hosted by:\s*([^|\n]+)/i) || [])[1]);
         data.co_hosts = extractNames((input.match(/Co-Host(?:\/Supervised by)?:\s*([\s\S]*?)(?=Attendees:|Passed:|Notes:|Number of participants:|$)/i) || [])[1]);
         data.attendees = extractNames((input.match(/Attendees:\s*([\s\S]*?)(?=Passed:|Notes:|Proof:|Number of participants:|$)/i) || [])[1]);
-        
-        const partMatch = input.match(/Number of participants:\s*(\d+)/i);
-        if (partMatch) data.participants = parseInt(partMatch[1]);
+        data.participants = parseInt((input.match(/Number of participants:\s*(\d+)/i) || [0, 0])[1]) || 0;
     }
 
     const reportEntries = [];
@@ -86,136 +75,116 @@ async function processLog(auth, spreadsheetId, command, input) {
 
     for (const user of uniqueUsers) {
         if (!user.name) continue;
-        const res = await updateUserInTabs(sheets, spreadsheetId, user.name, eventType, { ...data, role: user.role });
+        const res = await updateUserInTabs(doc, user.name, eventType, { ...data, role: user.role });
         reportEntries.push(res);
     }
     return reportEntries.join('\n');
 }
 
-async function updateUserInTabs(sheets, spreadsheetId, username, type, context) {
+async function updateUserInTabs(doc, username, type, context) {
     const searchTarget = normalizeName(username);
-    let changeLogs = [];
     let foundAny = false;
-
-    const staffRange = "⭐STAFF TEAM!B1:B100";
-    const staffRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: staffRange });
-    const staffRows = staffRes.data.values || [];
-    const isStaffMember = staffRows.some(r => r[0] && normalizeName(r[0]) === searchTarget);
-    
-    // Check raw input for PT/GS keywords to ensure Recruit sheet catches it regardless of how it was parsed
-    const fullText = context.rawInput.toLowerCase();
-    const isCompanyEvent = fullText.includes("company");
-    const isPT = fullText.includes("pt") || fullText.includes("physical training");
-    const isGS = fullText.includes("gs") || fullText.includes("guarding sim");
-    const isPatrol = fullText.includes("patrol");
+    let changeLogs = [];
 
     for (const [tabName, cfg] of Object.entries(TABS_CONFIG)) {
-        const range = `${tabName}!B1:B100`;
-        const res = await sheets.spreadsheets.values.get({ spreadsheetId, range });
-        const rows = res.data.values || [];
-        
-        let rowIndex = rows.findIndex(r => r[0] && normalizeName(r[0]) === searchTarget);
-        if (rowIndex === -1) continue;
+        const sheet = doc.sheetsByTitle[tabName];
+        if (!sheet) continue;
 
+        const limit = Math.min(sheet.rowCount, 100);
+        await sheet.loadCells(`A1:P${limit}`);
+
+        let rowIndex = -1;
+        for (let i = 0; i < limit; i++) {
+            const val = sheet.getCell(i, 1).value; 
+            if (normalizeName(val) === searchTarget) {
+                rowIndex = i; 
+                break;
+            }
+        }
+
+        if (rowIndex === -1) continue;
         foundAny = true;
         const rowNum = rowIndex + 1;
         let tabChanges = [];
 
-        // 1. COMPANY LOGIC (Staff Specific)
-        if (isCompanyEvent && isStaffMember && tabName === "⭐STAFF TEAM") {
-            const val = (context.role === 'Host') ? 1.0 : 0.5;
-            tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', val));
-            tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'H', val));
-            tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'J', 10));
-            changeLogs.push(`**${username}** (${tabName} Co.): ${tabChanges.join(', ')}`);
+        const isDivSheet = ["👑 VULCAN", "❄️ BLIZZARD FORCE", "🔥 WILDFIRE ", "🏬TROOPER PLATOON"].includes(tabName);
+        if (isDivSheet && rowNum >= 11 && rowNum <= 13) {
+            if (context.role === 'Host') {
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'D', 1));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'E', 1));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'I', 10));
+            } else if (context.role === 'Co-Host') {
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'D', 0.5));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'E', 0.5));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'I', 10));
+            } else if (context.role === 'Attendee') {
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'F', 1));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'G', 1));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'I', 10));
+            }
+            await sheet.saveUpdatedCells();
+            changeLogs.push(`**${username}** (${tabName} Sgt): ${tabChanges.join(', ')}`);
             continue; 
         }
 
-        // 2. RECRUIT LOGIC (FIXED: Checks keywords properly)
-        if (tabName === "💂RECRUITS") {
-            if (isPT) {
-                await sheets.spreadsheets.values.update({
-                    spreadsheetId, range: `${tabName}!D${rowNum}`,
-                    valueInputOption: 'USER_ENTERED', requestBody: { values: [["TRUE"]] }
-                });
-                tabChanges.push(`[D${rowNum}]: Set TRUE`);
-            } 
-            if (isPatrol) {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', 1));
-            } 
-            if (isGS) {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', 1));
+        if (tabName === "⭐STAFF TEAM" && (context.role === 'Host' || context.role === 'Co-Host')) {
+            const val = context.role === 'Host' ? 1.0 : 0.5;
+            if (type === "Tryout") {
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'E', val));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'K', val));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'J', 10));
+            } else {
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'D', val));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'G', val));
+                tabChanges.push(updateCellManual(sheet, rowIndex, 'J', 10));
             }
-            
-            if (tabChanges.length > 0) {
-                changeLogs.push(`**${username}** (${tabName}): ${tabChanges.join(', ')}`);
-            }
+            await sheet.saveUpdatedCells();
+            changeLogs.push(`**${username}** (${tabName} Staff): ${tabChanges.join(', ')}`);
             continue;
         }
 
-        // 3. TRYOUT PARTICIPANT LOGIC
-        if (type === "Tryout") {
-            let tryoutPoints = 0;
-            if (context.participants === 0) {
-                tryoutPoints = 0.5;
-            } else {
-                tryoutPoints = (context.role === 'Host' || context.role === 'Attendee') ? 1.0 : 0.5;
-            }
-
-            if (tabName === "⭐STAFF TEAM") {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', tryoutPoints));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'K', tryoutPoints));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'J', 10));
-            } else {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, cfg.updateCols[0], tryoutPoints));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, cfg.updateCols[1], tryoutPoints));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, cfg.updateCols[2] || 'I', 10));
-            }
-            changeLogs.push(`**${username}** (${tabName} Tryout): ${tabChanges.join(', ')}`);
-            continue;
-        }
-
-        // 4. SERGEANT LOGIC (Rows 11-13)
-        const isDivSheet = ["👑 VULCAN", "❄️ BLIZZARD FORCE", "🔥 WILDFIRE ", "🏬TROOPER PLATOON"].includes(tabName);
-        if (isDivSheet && rowNum >= 11 && rowNum <= 13) {
-            const mult = (context.role === 'Host') ? 1 : 0.5;
-            if (context.role === 'Attendee') {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', 1));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'G', 1));
-            } else {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'D', mult));
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', mult));
-            }
-            tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'I', 10));
-            changeLogs.push(`**${username}** (${tabName} Sgt): ${tabChanges.join(', ')}`);
-            continue;
-        }
-
-        // 5. GENERAL REWARDS (FIXED: Co-Host now gets 0.5)
         let rewards = [0, 0, 0];
-        if (type === "Time Log") {
-            tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, cfg.timeCol, context.minutes));
-            rewards = [Math.floor(context.minutes / 120), Math.floor(context.minutes / 120), Math.floor(context.minutes / 60) * 10];
-        } else if (type === "SSU") {
-            const ssuVal = context.duration === 40 ? 2.0 : 1.0;
-            const ssuMult = (context.role === 'Host' || context.role === 'Attendee') ? 1 : 0.5;
-            rewards = [ssuVal * ssuMult, ssuVal * ssuMult, (ssuVal * 10)];
-        } else {
-            // Standard Event: Host/Attendee get 1.0, Co-Host gets 0.5
-            const eventVal = (context.role === 'Host' || context.role === 'Attendee') ? 1.0 : 0.5;
-            rewards = [eventVal, eventVal, 10];
-        }
+        const eName = (context.eventName || "").toLowerCase();
 
-        for (let i = 0; i < cfg.updateCols.length; i++) {
-            if (rewards[i] !== 0) {
-                tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, cfg.updateCols[i], rewards[i]));
+        if (type === "Time Log") {
+            const cell = sheet.getCell(rowIndex, colToIndex(cfg.timeCol));
+            const oldT = parseFloat(cell.value) || 0;
+            cell.value = oldT + context.minutes;
+            tabChanges.push(`[${cfg.timeCol}${rowNum}]: ${oldT} -> ${cell.value}`);
+            rewards = [Math.floor(context.minutes / 120), Math.floor(context.minutes / 120), Math.floor(context.minutes / 60) * 10];
+        } 
+        else if (tabName === "💂RECRUITS") {
+            if (eName.includes("physical training")) {
+                sheet.getCell(rowIndex, 3).value = "TRUE";
+                tabChanges.push(`[D${rowNum}]: Set TRUE`);
+            } else if (type === "Tryout") rewards = [1.0, 1.0, 1];
+            else if (eName.includes("patrol")) rewards = [0, context.role === 'Attendee' ? 1.0 : 0.5, 0];
+            else if (eName.includes("guarding simulation")) rewards = [0, 0, 1.0];
+        } 
+        else {
+            if (type === "SSU") {
+                rewards = context.duration === 40 ? [2.0, 2.0, 20] : [1.0, 1.0, 10];
+            } else if (type === "Tryout") {
+                rewards = [1.0, 1.0, 10];
+            } else if (type === "Event") {
+                rewards = [1.0, 1.0, 10];
+                if (eName.includes("guarding simulation")) { rewards[0] += 1; rewards[1] += 1; }
             }
         }
 
-        if (tabChanges.length > 0) changeLogs.push(`**${username}** (${tabName}): ${tabChanges.join(', ')}`);
+        cfg.updateCols.forEach((col, idx) => {
+            if (rewards[idx] !== 0) {
+                tabChanges.push(updateCellManual(sheet, rowIndex, col, rewards[idx]));
+            }
+        });
+
+        if (tabChanges.length > 0) {
+            await sheet.saveUpdatedCells();
+            changeLogs.push(`**${username}** (${tabName}): ${tabChanges.join(', ')}`);
+        }
     }
 
-    return foundAny ? changeLogs.join('\n') : `❌ **${username}**: Not found.`;
+    return foundAny ? changeLogs.join('\n') : `❌ **${username}**: Not found in any tab.`;
 }
 
 module.exports = { processLog };
