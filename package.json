@@ -6,26 +6,18 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Vibbess/tfo-bot-logging.git"
-  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
-  "bugs": {
-    "url": "https://github.com/Vibbess/tfo-bot-logging/issues"
-  },
-  "homepage": "https://github.com/Vibbess/tfo-bot-logging#readme",
   "dependencies": {
-    "axios": "^1.13.6",
+    "axios": "^1.13.5",
     "chart.js": "^4.5.1",
     "chartjs-node-canvas": "^5.0.0",
     "discord.js": "^14.25.1",
-    "dotenv": "^17.3.1",
-    "google-auth-library": "^10.6.2",
-    "google-spreadsheet": "^5.2.0",
+    "dotenv": "^16.3.1",
+    "google-auth-library": "^10.5.0",
+    "google-spreadsheet": "^5.0.2",
     "googleapis": "^171.4.0",
     "luxon": "^3.7.2",
     "noblox.js": "^6.2.0"
