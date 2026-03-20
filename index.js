@@ -1,80 +1,123 @@
-require('dotenv').config();
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, WebhookClient } = require('discord.js');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { JWT } = require('google-auth-library');
-const creds = require('./credentials.json');
+const config = require('./config');
+const ranker = require('./ranker');
+const logger = require('./logger');
 
-const { transferUser } = require('./ranker');
-const { processLog } = require('./logger');
+// 1. Initialize Discord Client
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
 
-const TOKEN = process.env.DISCORD_TOKEN;
-const SHEET_ID = process.env.SHEET_ID;
-const ALLOWED_GUILD_ID = "1469734105292865768";
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
-
-let webhook = null;
-if (WEBHOOK_URL && WEBHOOK_URL.startsWith('http')) {
-    webhook = new WebhookClient({ url: WEBHOOK_URL });
-}
-
+// 2. Google Sheets Authentication
 const serviceAccountAuth = new JWT({
-    email: creds.client_email,
-    key: creds.private_key,
+    email: config.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+    key: config.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
-const doc = new GoogleSpreadsheet(SHEET_ID, serviceAccountAuth);
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const doc = new GoogleSpreadsheet(config.SPREADSHEET_ID, serviceAccountAuth);
 
-client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.guildId !== ALLOWED_GUILD_ID) return;
+// 3. Webhook for BGC Logging
+const bgcWebhook = new WebhookClient({ url: config.BGC_WEBHOOK_URL });
 
-    await interaction.deferReply();
-    const executor = `<@${interaction.user.id}>`;
+// 4. Slash Command Definitions
+const commands = [
+    // /bgc command
+    new SlashCommandBuilder()
+        .setName('bgc')
+        .setDescription('Run a background check on a user')
+        .addStringOption(opt => opt.setName('roblox_userid').setDescription('The Roblox User ID').setRequired(true))
+        .addUserOption(opt => opt.setName('discord_user').setDescription('The Discord User').setRequired(true)),
+
+    // /rank command
+    new SlashCommandBuilder()
+        .setName('rank')
+        .setDescription('Promote or transfer a user between sheets/roles')
+        .addStringOption(opt => opt.setName('username').setDescription('Roblox Username').setRequired(true))
+        .addUserOption(opt => opt.setName('member').setDescription('Discord Member').setRequired(true))
+        .addStringOption(opt => opt.setName('current_rank').setDescription('Current Rank/Sheet location').setRequired(true))
+        .addStringOption(opt => opt.setName('new_rank').setDescription('New Rank to give').setRequired(true)),
+
+    // /log command
+    new SlashCommandBuilder()
+        .setName('log')
+        .setDescription('Log an event, patrol, or tryout')
+        .addStringOption(opt => opt.setName('eventtype').setDescription('Type of event (Patrol, PT, Tryout, etc)').setRequired(true))
+        .addStringOption(opt => opt.setName('input').setDescription('Paste the full log format here').setRequired(true))
+        .addBooleanOption(opt => opt.setName('weekend').setDescription('Is this a weekend event? (2x points)').setRequired(true)),
+
+    // /test_check command
+    new SlashCommandBuilder()
+        .setName('test_check')
+        .setDescription('Check promotion test results for a user')
+        .addStringOption(opt => opt.setName('roblox_username').setDescription('Roblox Username').setRequired(true))
+].map(command => command.toJSON());
+
+// 5. Register Commands
+const rest = new REST({ version: '10' }).setToken(config.DISCORD_TOKEN);
+
+(async () => {
+    try {
+        console.log('Started refreshing application (/) commands.');
+        await rest.put(Routes.applicationCommands(config.CLIENT_ID), { body: commands });
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error(error);
+    }
+})();
+
+// 6. Interaction Handler
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    await interaction.deferReply({ ephemeral: true });
 
     try {
+        // Handle BGC
+        if (interaction.commandName === 'bgc') {
+            const response = await ranker.handleBGC(doc, interaction, bgcWebhook);
+            await interaction.editReply(response);
+        }
+
+        // Handle Ranking
         if (interaction.commandName === 'rank') {
             const username = interaction.options.getString('username');
-            const fromRank = interaction.options.getString('current_rank');
-            const toRank = interaction.options.getString('new_rank');
+            const member = interaction.options.getMember('member');
+            const currentRank = interaction.options.getString('current_rank');
+            const newRank = interaction.options.getString('new_rank');
 
-            const result = await transferUser(doc, username, fromRank, toRank, executor, webhook);
-            await interaction.editReply(result);
+            const response = await ranker.transferUser(doc, username, member, currentRank, newRank, interaction);
+            await interaction.editReply(response);
         }
 
-        if (['eventlog', 'ssulog', 'timelog'].includes(interaction.commandName)) {
-            const input = interaction.options.getString('input');
-            const result = await processLog(doc, interaction.commandName, input, executor, webhook);
-            await interaction.editReply(result);
+        // Handle Logging
+        if (interaction.commandName === 'log') {
+            const response = await logger.processLog(doc, interaction);
+            await interaction.editReply(response);
         }
 
-    } catch (error) {
-        console.error("Interaction Error:", error);
-        await interaction.editReply(`System Error: ${error.message}`);
-    }
-});
+        // Handle Test Check
+        if (interaction.commandName === 'test_check') {
+            const response = await ranker.handlePromotionTest(doc, interaction);
+            await interaction.editReply(response);
+        }
 
-client.once('clientReady', async () => {
-    const rest = new REST({ version: '10' }).setToken(TOKEN);
-    const commands = [
-        new SlashCommandBuilder().setName('rank').setDescription('Promote/Transfer a user')
-            .addStringOption(o => o.setName('username').setRequired(true).setDescription('Username'))
-            .addStringOption(o => o.setName('current_rank').setRequired(true).setDescription('From')
-                .addChoices({name:'Recruit',value:'Recruit'},{name:'Trooper',value:'Trooper'},{name:'Specialist',value:'Specialist'}))
-            .addStringOption(o => o.setName('new_rank').setRequired(true).setDescription('To')
-                .addChoices({name:'Trooper',value:'Trooper'},{name:'Specialist',value:'Specialist'},{name:'Corporal',value:'Corporal'})),
-        
-        new SlashCommandBuilder().setName('eventlog').setDescription('Log an event').addStringOption(o => o.setName('input').setRequired(true).setDescription('Paste log')),
-        new SlashCommandBuilder().setName('ssulog').setDescription('Log an SSU').addStringOption(o => o.setName('input').setRequired(true).setDescription('Paste log')),
-        new SlashCommandBuilder().setName('timelog').setDescription('Log activity time').addStringOption(o => o.setName('input').setRequired(true).setDescription('Paste log'))
-    ];
-
-    try {
-        await rest.put(Routes.applicationCommands(client.user.id), { body: commands });
-        console.log("Bot online.");
     } catch (err) {
-        console.error("Registration Error:", err);
+        console.error(err);
+        await interaction.editReply(`An error occurred: ${err.message}`);
     }
 });
 
-client.login(TOKEN);
+// 7. Login
+client.once('ready', () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+});
+
+client.login(config.DISCORD_TOKEN);
