@@ -5,6 +5,9 @@ const config = require('./config');
 const ranker = require('./ranker');
 const logger = require('./logger');
 
+// Load your credentials file directly
+const creds = require('./credentials.json.json'); // Match the double .json in your screenshot
+
 // 1. Initialize Discord Client
 const client = new Client({
     intents: [
@@ -15,10 +18,10 @@ const client = new Client({
     ]
 });
 
-// 2. Google Sheets Authentication
+// 2. Google Sheets Authentication using the JSON file
 const serviceAccountAuth = new JWT({
-    email: config.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-    key: config.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+    email: creds.client_email,
+    key: creds.private_key.replace(/\\n/g, '\n'),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
