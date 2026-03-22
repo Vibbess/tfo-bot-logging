@@ -18,10 +18,11 @@ const client = new Client({
     ] 
 });
 
-// 2. Google Sheets Auth
+// 2. Setup Google Auth (Updated for Railway Variables)
 const serviceAccountAuth = new JWT({
-    email: creds.client_email,
-    key: creds.private_key.replace(/\\n/g, '\n'),
+    email: process.env.GOOGLE_CLIENT_EMAIL || creds.client_email,
+    // This handles both literal newlines and escaped \n characters
+    key: (process.env.GOOGLE_PRIVATE_KEY || creds.private_key).replace(/\\n/g, '\n'),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
