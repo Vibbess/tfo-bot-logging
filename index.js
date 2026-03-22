@@ -28,8 +28,16 @@ const serviceAccountAuth = new JWT({
 const mainDoc = new GoogleSpreadsheet(process.env.SHEET_ID, serviceAccountAuth);
 const testDoc = new GoogleSpreadsheet(config.TEST_SHEET_ID, serviceAccountAuth);
 
-// 3. Setup Logging Webhook
-const webhook = new WebhookClient({ url: process.env.BGC_WEBHOOK_URL || process.env.WEBHOOK_URL });
+// --- Update this section in index.js ---
+let webhook = null;
+const webhookUrl = process.env.WEBHOOK_URL || process.env.BGC_WEBHOOK_URL;
+
+if (webhookUrl && webhookUrl.startsWith('https://')) {
+    webhook = new WebhookClient({ url: webhookUrl });
+    console.log("✅ Webhook Client initialized.");
+} else {
+    console.warn("⚠️ WARNING: WEBHOOK_URL is missing or invalid in .env. Logging will be skipped.");
+}
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
