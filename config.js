@@ -1,4 +1,12 @@
+require('dotenv').config();
+
 module.exports = {
+    // API Keys & Tokens (Fetched from .env)
+    DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+    CLIENT_ID: process.env.DISCORD_CLIENT_ID,
+    BGC_WEBHOOK_URL: process.env.BGC_WEBHOOK_URL,
+    SPREADSHEET_ID: "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o", 
+
     // Tab Names
     PLACEMENT_TAB: "PLACEMENT",
     RECRUITS_TAB: "RECRUITS",
@@ -22,6 +30,6 @@ module.exports = {
     // Channel IDs
     CHANNELS: {
         WELCOME: "1468756387562782732",
-        LOGS: "1447366711476228236" // Update to your logging channel
+        LOGS: "1447366711476228236" 
     }
 };

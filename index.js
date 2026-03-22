@@ -27,8 +27,13 @@ const serviceAccountAuth = new JWT({
 
 const doc = new GoogleSpreadsheet(config.SPREADSHEET_ID, serviceAccountAuth);
 
-// 3. Webhook for BGC Logging
-const bgcWebhook = new WebhookClient({ url: config.BGC_WEBHOOK_URL });
+// Replace the old line 31 with this logic:
+let bgcWebhook = null;
+if (config.BGC_WEBHOOK_URL) {
+    bgcWebhook = new WebhookClient({ url: config.BGC_WEBHOOK_URL });
+} else {
+    console.warn("WARNING: BGC_WEBHOOK_URL is not defined in your config. BGC logs will not be sent.");
+}
 
 // 4. Slash Command Definitions
 const commands = [
