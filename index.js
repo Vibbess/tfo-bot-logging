@@ -1,156 +1,128 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, WebhookClient } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, WebhookClient, MessageFlags } = require('discord.js');
+const { google } = require('googleapis');
 const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { JWT } = require('google-auth-library');
-const creds = require('./credentials.json');
+const fs = require('fs');
+
 const config = require('./config');
-
-// Logic Modules
 const ranker = require('./ranker');
-const logger = require('./logger'); 
+const logger = require('./logger');
 
-// 1. Initialize Discord Client
+// --- Load Google Credentials from File ---
+const credentials = JSON.parse(fs.readFileSync('client_secret.json'));
+const { client_id, client_secret, redirect_uris } = credentials.web;
+
+const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+
+// --- File Paths for "Database" ---
+const TOKEN_PATH = './tokens.json';
+const PERMS_PATH = './permissions.json';
+
 const client = new Client({ 
-    intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.MessageContent
-    ] 
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.MessageContent] 
 });
 
-const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
-const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
+const webhook = process.env.WEBHOOK_URL ? new WebhookClient({ url: process.env.WEBHOOK_URL }) : null;
 
-let gKey;
-if (gRawKey && !gRawKey.includes('-----BEGIN')) {
-    // Treat as Base64 if the header is missing
-    gKey = Buffer.from(gRawKey, 'base64').toString('utf8');
-} else {
-    // Treat as standard string (handling literal \n from .env if needed)
-    gKey = gRawKey ? gRawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim() : "";
+// --- Helper: Get User's Personal Sheet Access ---
+async function getUserDoc(userId, sheetId) {
+    if (!fs.existsSync(TOKEN_PATH)) return null;
+    const db = JSON.parse(fs.readFileSync(TOKEN_PATH));
+    const tokens = db[userId];
+    if (!tokens) return null;
+
+    const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+    auth.setCredentials(tokens);
+    return new GoogleSpreadsheet(sheetId, auth);
 }
 
-// Ensure the variable name here matches the constructor below
-const serviceAccountAuth = new JWT({
-    email: gEmail,
-    key: gKey,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
-
-const mainDoc = new GoogleSpreadsheet(process.env.SHEET_ID, serviceAccountAuth);
-const testDoc = new GoogleSpreadsheet(config.TEST_SHEET_ID, serviceAccountAuth);
-
-// 3. Webhook Setup (Safe check for Railway Variables)
-let webhook = null;
-if (process.env.WEBHOOK_URL && process.env.WEBHOOK_URL.startsWith('https://')) {
-    webhook = new WebhookClient({ url: process.env.WEBHOOK_URL });
-    console.log("✅ Webhook Client linked via Railway.");
-} else {
-    console.warn("⚠️ WEBHOOK_URL not found in Railway Variables. Logging will be skipped.");
+// --- Helper: Permissions ---
+function getPermissions() {
+    if (!fs.existsSync(PERMS_PATH)) return {};
+    try { return JSON.parse(fs.readFileSync(PERMS_PATH)); } catch { return {}; }
 }
 
-// 4. Interaction Handler
+// --- Interaction Handler ---
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+    const { commandName, user, options } = interaction;
 
-    // Permission check based on config roles
-    const isAuthorized = interaction.member.roles.cache.has(config.ROLES.AUTHORIZED);
-    const isEligible = interaction.member.roles.cache.has(config.ROLES.PROMOTION_ELIGIBLE);
+    // 1. AUTHORIZE (Admin)
+    if (commandName === 'authorize') {
+        if (user.id !== config.OWNER_ID) return interaction.reply({ content: "❌ Owner only.", flags: [MessageFlags.Ephemeral] });
+        const target = options.getUser('user');
+        const cmd = options.getString('command');
+        const perms = getPermissions();
+        if (!perms[target.id]) perms[target.id] = [];
+        if (!perms[target.id].includes(cmd)) perms[target.id].push(cmd);
+        fs.writeFileSync(PERMS_PATH, JSON.stringify(perms, null, 2));
+        return interaction.reply({ content: `✅ Authorized <@${target.id}> for \`/${cmd}\`.`, flags: [MessageFlags.Ephemeral] });
+    }
 
-    await interaction.deferReply();
+    // 2. VERIFY & CONFIRM (OAuth2)
+    if (commandName === 'verify') {
+        const url = oAuth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/spreadsheets'] });
+        return interaction.reply({ content: `🔗 [Click to Login with Google](${url})\nThen use \`/confirm\` with the code.`, flags: [MessageFlags.Ephemeral] });
+    }
 
-    try {
-        switch (interaction.commandName) {
-            case 'authorize':
-                if (!isAuthorized) return await interaction.editReply("❌ You don't have permission to use this.");
-                const target = interaction.options.getMember('user');
-                await target.roles.add(config.ROLES.AUTHORIZED);
-                await interaction.editReply(`✅ Authorized **${target.user.tag}** to use bot commands.`);
-                break;
+    if (commandName === 'confirm') {
+        try {
+            const { tokens } = await oAuth2Client.getToken(options.getString('code'));
+            const db = fs.existsSync(TOKEN_PATH) ? JSON.parse(fs.readFileSync(TOKEN_PATH)) : {};
+            db[user.id] = tokens;
+            fs.writeFileSync(TOKEN_PATH, JSON.stringify(db, null, 2));
+            return interaction.reply({ content: "✅ Linked! Your Google account is ready.", flags: [MessageFlags.Ephemeral] });
+        } catch (e) { return interaction.reply({ content: "❌ Invalid code.", flags: [MessageFlags.Ephemeral] }); }
+    }
 
-            case 'bgc':
-                if (!isAuthorized) return await interaction.editReply("❌ Unauthorized.");
-                const bgcRes = await ranker.handleBGC(mainDoc, interaction, webhook);
-                await interaction.editReply(bgcRes);
-                break;
-
-            case 'request_promotion_test':
-                if (!isEligible) return await interaction.editReply("❌ You must be 'Promotion Eligible' to check results.");
-                const testRes = await ranker.handlePromotionTest(mainDoc, testDoc, interaction, webhook);
-                await interaction.editReply(testRes);
-                break;
-
-            case 'rank':
-                if (!isAuthorized) return await interaction.editReply("❌ Unauthorized.");
-                const rankRes = await ranker.handleRank(mainDoc, interaction, webhook);
-                await interaction.editReply(rankRes);
-                break;
-
-            case 'eventlog':
-                if (!isAuthorized) return await interaction.editReply("❌ Unauthorized.");
-                const logRes = await logger.processLog(mainDoc, interaction, webhook);
-                await interaction.editReply(logRes);
-                break;
-
-            default:
-                await interaction.editReply("Unknown command.");
+    // 3. LOGIC COMMANDS
+    const protectedCmds = ['rank', 'eventlog', 'bgc', 'request_promotion_test'];
+    if (protectedCmds.includes(commandName)) {
+        const perms = getPermissions();
+        if (user.id !== config.OWNER_ID && (!perms[user.id] || !perms[user.id].includes(commandName))) {
+            return interaction.reply({ content: "❌ Not authorized.", flags: [MessageFlags.Ephemeral] });
         }
-    } catch (error) {
-        console.error("Command Error:", error);
-        await interaction.editReply(`⚠️ An error occurred: ${error.message}`);
+
+        await interaction.deferReply();
+        const mainDoc = await getUserDoc(user.id, process.env.SHEET_ID);
+        if (!mainDoc) return interaction.editReply("❌ Run `/verify` first.");
+
+        try {
+            if (commandName === 'rank') {
+                await interaction.editReply(await ranker.handleRank(mainDoc, interaction, webhook));
+            } else if (commandName === 'bgc') {
+                await interaction.editReply(await ranker.handleBGC(mainDoc, interaction));
+            } else if (commandName === 'eventlog') {
+                await interaction.editReply(await logger.processLog(mainDoc, interaction, webhook));
+            } else if (commandName === 'request_promotion_test') {
+                const testDoc = await getUserDoc(user.id, config.TEST_SHEET_ID);
+                await interaction.editReply(await ranker.handlePromotionTest(mainDoc, testDoc, interaction));
+            }
+        } catch (err) {
+            console.error(err);
+            await interaction.editReply(`⚠️ Sheet Error: ${err.message}`);
+        }
     }
 });
 
-// 5. Bot Startup & Command Registration
-client.once('clientReady', async (c) => {
-    console.log(`🚀 ${c.user.tag} is online and connected to Railway!`);
-
-    const commands = [
-        new SlashCommandBuilder()
-            .setName('authorize')
-            .setDescription('Grant bot permissions to a user')
-            .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('bgc')
-            .setDescription('Run a background check on a new user')
-            .addStringOption(o => o.setName('roblox_username').setDescription('Roblox Name').setRequired(true))
-            .addUserOption(o => o.setName('discord_user').setDescription('Discord User').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('request_promotion_test')
-            .setDescription('Verify test scores and promote to Phase 2')
-            .addStringOption(o => o.setName('roblox_username').setDescription('Your Roblox Name').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('rank')
-            .setDescription('Promote or transfer a user')
-            .addStringOption(o => o.setName('roblox_username').setDescription('Roblox Name').setRequired(true))
-            .addUserOption(o => o.setName('discord_user').setDescription('Discord User').setRequired(true))
-            .addStringOption(o => o.setName('current_rank').setDescription('Current Rank').setRequired(true))
-            .addStringOption(o => o.setName('new_rank').setDescription('Target Rank').setRequired(true)),
-
-        new SlashCommandBuilder()
-            .setName('eventlog')
-            .setDescription('Log points for Patrols, PTs, or Tryouts')
-            .addStringOption(o => o.setName('eventtype').setDescription('Event Type').setRequired(true).addChoices(
-                { name: 'Patrol', value: 'patrol' },
-                { name: 'PT', value: 'pt' },
-                { name: 'Tryout', value: 'tryout' }
-            ))
-            .addStringOption(o => o.setName('input').setDescription('Paste user list here').setRequired(true))
-            .addBooleanOption(o => o.setName('weekend').setDescription('Is it the weekend? (2x Points)').setRequired(true))
-    ].map(cmd => cmd.toJSON());
+// --- Register Commands ---
+client.once('ready', async () => {
+    console.log(`🚀 ${client.user.tag} Online (Internal Config Mode)`);
+    const cmds = [
+        new SlashCommandBuilder().setName('authorize').setDescription('Auth user').addUserOption(o=>o.setName('user').setRequired(true).setDescription('User')).addStringOption(o=>o.setName('command').setRequired(true).setDescription('Cmd').addChoices({name:'rank',value:'rank'},{name:'eventlog',value:'eventlog'},{name:'bgc',value:'bgc'},{name:'request_promotion_test',value:'request_promotion_test'})),
+        new SlashCommandBuilder().setName('verify').setDescription('Link Google'),
+        new SlashCommandBuilder().setName('confirm').setDescription('Enter code').addStringOption(o=>o.setName('code').setRequired(true).setDescription('Code')),
+        new SlashCommandBuilder().setName('bgc').setDescription('Run BGC').addStringOption(o=>o.setName('roblox_username').setRequired(true).setDescription('Name')),
+        new SlashCommandBuilder().setName('request_promotion_test').setDescription('Check test').addStringOption(o=>o.setName('roblox_username').setRequired(true).setDescription('Name')),
+        new SlashCommandBuilder().setName('rank').setDescription('Update rank').addStringOption(o=>o.setName('roblox_username').setRequired(true).setDescription('Name')).addStringOption(o=>o.setName('new_rank').setRequired(true).setDescription('New Rank')),
+        new SlashCommandBuilder().setName('eventlog').setDescription('Log points').addStringOption(o=>o.setName('eventtype').setRequired(true).setDescription('Type')).addStringOption(o=>o.setName('input').setRequired(true).setDescription('Names')).addBooleanOption(o=>o.setName('weekend').setRequired(true).setDescription('Weekend?'))
+    ].map(c => c.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-
     try {
-        // Automatically uses the bot's ID from the client object
-        await rest.put(Routes.applicationCommands(c.user.id), { body: commands });
-        console.log('✅ All slash commands registered successfully.');
-    } catch (err) {
-        console.error("Failed to register commands:", err);
-    }
+        await rest.put(Routes.applicationCommands(client.user.id), { body: cmds });
+        console.log("✅ Slash Commands Registered!");
+    } catch (e) { console.error(e); }
 });
 
 client.login(process.env.DISCORD_TOKEN);
