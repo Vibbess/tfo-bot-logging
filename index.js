@@ -18,16 +18,16 @@ const client = new Client({
     ] 
 });
 
-const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
+// Clean the private key properly
+const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
 
-const gKey = (process.env.GOOGLE_PRIVATE_KEY || creds.private_key)
-    .replace(/\\n/g, '\n');
+const gKey = gRawKey 
+    ? gRawKey.replace(/\\n/g, '\n') 
+    : undefined;
 
-const serviceAccountAuth = new JWT({
-    email: gEmail,
-    key: gKey,
-    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-});
+if (!gKey) {
+    console.error("❌ ERROR: Google Private Key is missing!");
+}
 
 const mainDoc = new GoogleSpreadsheet(process.env.SHEET_ID, serviceAccountAuth);
 const testDoc = new GoogleSpreadsheet(config.TEST_SHEET_ID, serviceAccountAuth);
