@@ -17,8 +17,8 @@ const { processLog, processTimeLog } = require('./logger');
 
 // --- CONFIG ---
 const TOKEN = process.env.DISCORD_TOKEN;
-const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o"; // All Main Logs/Ranks
-const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM"; // Score checking
+const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o"; 
+const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM"; 
 const ALLOWED_GUILD_ID = "1369082109184053469"; 
 const OWNER_ID = "1097605097502015539"; 
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
@@ -40,9 +40,15 @@ function isAuthorized(member, commandName) {
     return perms[member.id] && perms[member.id].includes(commandName);
 }
 
-// --- GOOGLE OAUTH SETUP ---
-const credentials = JSON.parse(fs.readFileSync('client_secret.json'));
-const { client_id, client_secret, redirect_uris } = credentials.web;
+// --- GOOGLE OAUTH SETUP (FILELESS VERSION) ---
+// This part now looks for the GOOGLE_CREDENTIALS environment variable
+if (!process.env.GOOGLE_CREDENTIALS) {
+    console.error("FATAL ERROR: GOOGLE_CREDENTIALS environment variable is missing!");
+    process.exit(1);
+}
+
+const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+const { client_id, client_secret, redirect_uris } = credentials.web || credentials.installed;
 const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
 
 const webhook = WEBHOOK_URL ? new WebhookClient({ url: WEBHOOK_URL }) : null;
@@ -69,20 +75,11 @@ const commands = [
     new SlashCommandBuilder().setName('verify').setDescription('Link your Google account'),
     new SlashCommandBuilder().setName('confirm').setDescription('Enter the code from Google')
         .addStringOption(o => o.setName('code').setDescription('The code from the URL').setRequired(true)),
-
-    new SlashCommandBuilder().setName('authorize').setDescription('Auth a user for a command (Owner Only)')
-        .addUserOption(o => o.setName('user').setRequired(true))
-        .addStringOption(o => o.setName('command').setRequired(true).addChoices(
-            {name: 'rank', value: 'rank'}, {name: 'eventlog', value: 'eventlog'}, {name: 'bgc', value: 'bgc'}
-        )),
-
     new SlashCommandBuilder().setName('bgc').setDescription('Run Background Check')
         .addStringOption(o => o.setName('robloxuserid').setRequired(true))
         .addUserOption(o => o.setName('discorduser').setRequired(true)),
-
     new SlashCommandBuilder().setName('request').setDescription('Request promotion test')
         .addStringOption(o => o.setName('robloxusername').setRequired(true)),
-
     new SlashCommandBuilder().setName('rank').setDescription('Promote/Transfer User')
         .addStringOption(o => o.setName('robloxusername').setRequired(true))
         .addUserOption(o => o.setName('discorduser').setRequired(true))
@@ -93,14 +90,11 @@ const commands = [
             {name:'Veteran Jet Trooper', value:'Veteran Jet Trooper'}, {name:'Veteran Flame Trooper', value:'Veteran Flame Trooper'},
             {name:'Master Jet Trooper', value:'Master Jet Trooper'}, {name:'Master Flame Trooper', value:'Master Flame Trooper'}
         )),
-
     new SlashCommandBuilder().setName('eventlog').setDescription('Log an event')
         .addStringOption(o => o.setName('input').setRequired(true))
         .addBooleanOption(o => o.setName('weekend').setRequired(true)),
-
     new SlashCommandBuilder().setName('timelog').setDescription('Log in-game activity hours')
         .addStringOption(o => o.setName('input').setRequired(true))
-
 ].map(cmd => cmd.toJSON());
 
 // --- INTERACTION HANDLER ---
@@ -108,7 +102,6 @@ client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand() || interaction.guildId !== ALLOWED_GUILD_ID) return;
     const { commandName, user, options, member } = interaction;
 
-    // 1. Auth & Verification
     if (commandName === 'verify') {
         const url = oAuth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/spreadsheets'] });
         return interaction.reply({ content: `🔗 [Click here to verify](${url})`, flags: [MessageFlags.Ephemeral] });
@@ -121,31 +114,15 @@ client.on('interactionCreate', async (interaction) => {
             const db = fs.existsSync(TOKEN_PATH) ? JSON.parse(fs.readFileSync(TOKEN_PATH)) : {};
             db[user.id] = tokens;
             fs.writeFileSync(TOKEN_PATH, JSON.stringify(db, null, 2));
-            return interaction.reply({ content: "✅ Verified! Sheet access granted.", flags: [MessageFlags.Ephemeral] });
+            return interaction.reply({ content: "✅ Verified! Access granted.", flags: [MessageFlags.Ephemeral] });
         } catch (e) { return interaction.reply({ content: "❌ Invalid code.", flags: [MessageFlags.Ephemeral] }); }
     }
 
-    if (commandName === 'authorize') {
-        if (user.id !== OWNER_ID) return interaction.reply({ content: "❌ Owner only.", flags: [MessageFlags.Ephemeral] });
-        const target = options.getUser('user');
-        const cmd = options.getString('command');
-        const perms = getPermissions();
-        if (!perms[target.id]) perms[target.id] = [];
-        if (!perms[target.id].includes(cmd)) perms[target.id].push(cmd);
-        savePermissions(perms);
-        return interaction.reply({ content: `✅ Authorized <@${target.id}> for \`/${cmd}\`.`, flags: [MessageFlags.Ephemeral] });
-    }
-
-    // 2. Permission Check
     const protectedCmds = ['rank', 'eventlog', 'bgc', 'timelog'];
     if (protectedCmds.includes(commandName) && !isAuthorized(member, commandName)) {
         return interaction.reply({ content: "❌ Unauthorized.", flags: [MessageFlags.Ephemeral] });
     }
-    if (commandName === 'request' && !member.roles.cache.has(PROMO_REQ_ROLE_ID)) {
-        return interaction.reply({ content: "❌ You need the Promotion Test role.", flags: [MessageFlags.Ephemeral] });
-    }
 
-    // 3. Execution
     await interaction.deferReply();
     const auth = await getUserAuth(user.id);
     if (!auth) return interaction.editReply("❌ Please run `/verify` first.");
@@ -182,9 +159,8 @@ client.on('interactionCreate', async (interaction) => {
 client.once('ready', async (c) => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
-        console.log(`Logged in as ${c.user.tag}`);
         await rest.put(Routes.applicationGuildCommands(c.user.id, ALLOWED_GUILD_ID), { body: commands });
-        console.log(`✅ Commands registered.`);
+        console.log(`✅ ${c.user.tag} Online & Commands registered.`);
     } catch (err) { console.error(err); }
 });
 
