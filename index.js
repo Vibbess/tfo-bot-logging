@@ -18,11 +18,22 @@ const client = new Client({
     ] 
 });
 
-// 2. Setup Google Auth (Updated for Railway Variables)
+// --- Secure Google Auth ---
+const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
+const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
+
+// This logic fixes the "Invalid JWT Signature" by:
+// 1. Removing any accidental surrounding quotes
+// 2. Converting literal \n text into real newlines
+// 3. Ensuring no extra spaces at start/end
+const gKey = gRawKey
+    .replace(/^"(.*)"$/, '$1') // Remove surrounding double quotes if they exist
+    .replace(/\\n/g, '\n')      // Convert literal \n to real newlines
+    .trim();                    // Remove accidental leading/trailing spaces
+
 const serviceAccountAuth = new JWT({
-    email: process.env.GOOGLE_CLIENT_EMAIL || creds.client_email,
-    // This handles both literal newlines and escaped \n characters
-    key: (process.env.GOOGLE_PRIVATE_KEY || creds.private_key).replace(/\\n/g, '\n'),
+    email: gEmail,
+    key: gKey,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
