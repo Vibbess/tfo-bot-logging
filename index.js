@@ -19,16 +19,9 @@ const client = new Client({
 });
 
 const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
-const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
 
-let gKey;
-if (gRawKey.includes('-----BEGIN')) {
-    // If it's the raw key, clean the backslashes
-    gKey = gRawKey.replace(/\\n/g, '\n');
-} else {
-    // If it's the Base64 string from Railway, decode it
-    gKey = Buffer.from(gRawKey, 'base64').toString('utf8');
-}
+const gKey = (process.env.GOOGLE_PRIVATE_KEY || creds.private_key)
+    .replace(/\\n/g, '\n');
 
 const serviceAccountAuth = new JWT({
     email: gEmail,
