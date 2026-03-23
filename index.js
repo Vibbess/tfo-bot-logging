@@ -18,24 +18,22 @@ const client = new Client({
     ] 
 });
 
-// --- Secure Google Auth (The "Nuclear" Fix) ---
+// --- Base64 Google Auth Fix ---
 const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
 const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
 
-let gKey = gRawKey
-    .replace(/\\n/g, '\n') // Convert literal \n to real newlines
-    .replace(/"/g, '')     // Remove any accidental quotes
-    .trim();
-
-// If the key was pasted as one long line without newlines, 
-// we have to rebuild the block so the OpenSSL decoder recognizes it.
-if (!gKey.includes('\n') && gKey.includes('-----BEGIN PRIVATE KEY-----')) {
-    const header = '-----BEGIN PRIVATE KEY-----';
-    const footer = '-----END PRIVATE KEY-----';
-    let body = gKey.replace(header, '').replace(footer, '').replace(/\s/g, '');
-    // This regex slices the long string into 64-character lines (Standard RSA format)
-    body = body.match(/.{1,64}/g).join('\n');
-    gKey = `${header}\n${body}\n${footer}\n`;
+let gKey;
+try {
+    // Check if it's Base64 (doesn't contain the BEGIN header)
+    if (!gRawKey.includes('-----BEGIN')) {
+        gKey = Buffer.from(gRawKey, 'base64').toString('utf-8');
+    } else {
+        // Fallback for standard format
+        gKey = gRawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
+    }
+} catch (e) {
+    console.error("Failed to parse GOOGLE_PRIVATE_KEY");
+    gKey = gRawKey;
 }
 
 const serviceAccountAuth = new JWT({
