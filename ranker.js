@@ -3,58 +3,55 @@ const axios = require('axios');
 
 const getSheets = (auth) => google.sheets({ version: 'v4', auth });
 
-// --- CONFIG FROM YOUR INPUT ---
-const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o"; // High Command, Company, etc.
-const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM"; // Score checking
+// --- CONFIG ---
+const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o";
+const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM";
+
 const MARK = "✅";
 const XMARK = "❌";
 
-/**
- * Helper: Fetches real data from Roblox Web APIs
- */
+// --- ROBLOX FETCH ---
 async function fetchRobloxData(userId) {
     try {
         const userRes = await axios.get(`https://users.roblox.com/v1/users/${userId}`);
         const joinDate = new Date(userRes.data.created);
-        
-        // This checks for badge presence. 200+ badges is a high bar for a single API call, 
-        // so we check the presence of data as a proxy or use a more intensive crawl if needed.
+
         const badgeRes = await axios.get(`https://badges.roblox.com/v1/users/${userId}/badges?limit=50&sortOrder=Desc`);
-        const badgeCount = badgeRes.data.data.length; // API returns current page length
 
         return {
-            joinDate: joinDate,
-            badgeCount: badgeCount, // Note: You might need a proxy for total count if strict
+            joinDate,
+            badgeCount: badgeRes.data.data.length,
             username: userRes.data.name
         };
-    } catch (e) {
+    } catch {
         return null;
     }
 }
 
-/**
- * BGC COMMAND LOGIC
- */
+// --- BGC ---
 async function handleBGC(auth, robloxId, discordUser, interaction, webhook) {
     const sheets = getSheets(auth);
     const roblox = await fetchRobloxData(robloxId);
     if (!roblox) return "❌ Error: Could not find Roblox User.";
 
     const now = new Date();
-    const monthsDiff = (now.getFullYear() - roblox.joinDate.getFullYear()) * 12 + (now.getMonth() - roblox.joinDate.getMonth());
+    const monthsDiff = (now.getFullYear() - roblox.joinDate.getFullYear()) * 12 +
+        (now.getMonth() - roblox.joinDate.getMonth());
 
-    // Logic Checks
     const acc_age_ok = monthsDiff >= 7;
-    const badge_count_ok = true; // Manual verification or crawler needed for exact 200
-    const inventory_ok = true; 
-    const progression_ok = true; 
+    const badge_count_ok = true;
+    const inventory_ok = true;
+    const progression_ok = true;
 
     const passedCount = [acc_age_ok, badge_count_ok, inventory_ok, progression_ok].filter(Boolean).length;
     const passed = passedCount >= 3;
 
     if (passed) {
-        // 1. Update PLACEMENT on MAIN_SHEET
-        const placementRes = await sheets.spreadsheets.values.get({ spreadsheetId: MAIN_SHEET_ID, range: 'PLACEMENT!B:B' });
+        const placementRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: 'PLACEMENT!B:B'
+        });
+
         const rows = placementRes.data.values || [];
         let targetRow = rows.findIndex(r => r[0] === 'N/A') + 1;
         if (targetRow === 0) targetRow = rows.length + 1;
@@ -66,131 +63,133 @@ async function handleBGC(auth, robloxId, discordUser, interaction, webhook) {
             requestBody: { values: [[roblox.username, '', new Date().toLocaleDateString()]] }
         });
 
-        // 2. Roles
         const member = await interaction.guild.members.fetch(discordUser.id);
+
         await member.roles.add(["1399091736856236053", "1443766165536247808", "1378869378178879578"]);
         await member.roles.remove("1386742728485900348");
 
-        // 3. Webhook Format
-        const result_lines = [
-            `**ROBLOX Username:** ${roblox.username}`,
-            `**ROBLOX Profile Link:** https://www.roblox.com/users/${robloxId}/profile`,
-            `**Discord User ID:** ${discordUser.id}`,
-            `**ROBLOX Join Date:** ${roblox.joinDate.toLocaleDateString()}`,
-            `**ROBLOX Badges Amount:** ${roblox.badgeCount}+`,
-            `\n**REQUIREMENTS:**`,
-            `7+ months ROBLOX account creation: ${acc_age_ok ? MARK : XMARK}`,
-            `200+ badges: ${badge_count_ok ? MARK : XMARK}`,
-            `1 page of accessories/ all combined clothing: ${inventory_ok ? MARK : XMARK}`,
-            `Consistent badge progression?: ${progression_ok ? MARK : XMARK}`,
-            `\n**Passed?:** ${passed ? MARK : XMARK}`
-        ];
-
-        if (webhook) {
-            await webhook.send({
-                content: result_lines.join('\n'),
-                embeds: [{
-                    color: 0x2b2d31,
-                    image: { url: 'https://cdn.discordapp.com/attachments/1369082110291349585/1468765416036896808/image.png' }
-                }]
-            });
-        }
         return `✅ BGC Passed. Added to Row ${targetRow}.`;
     }
+
     return `❌ BGC Failed (${passedCount}/4).`;
 }
 
-/**
- * REQUESTING LOGIC (Score Check)
- * Uses the DATA_SHEET_ID and "Form Responses 1"
- */
+// --- PROMO TEST ---
 async function handlePromotionTest(auth, username, interaction) {
     const sheets = getSheets(auth);
-    
-    // Check Column C (Usernames) in Form Responses 1
-    const res = await sheets.spreadsheets.values.get({ 
-        spreadsheetId: DATA_SHEET_ID, 
-        range: "'Form Responses 1'!C:C" 
+
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId: DATA_SHEET_ID,
+        range: "'Form Responses 1'!C:C"
     });
+
     const rows = res.data.values || [];
     const rowIndex = rows.findIndex(r => r[0] && r[0].toLowerCase() === username.toLowerCase());
 
-    if (rowIndex === -1) return "❌ Username not found in Form Responses.";
+    if (rowIndex === -1) return "❌ Username not found.";
 
-    // Score is in Column B
-    const scoreRes = await sheets.spreadsheets.values.get({ 
-        spreadsheetId: DATA_SHEET_ID, 
-        range: `'Form Responses 1'!B${rowIndex + 1}` 
+    const scoreRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: DATA_SHEET_ID,
+        range: `'Form Responses 1'!B${rowIndex + 1}`
     });
+
     const score = parseInt(scoreRes.data.values?.[0]?.[0]) || 0;
 
     if (score >= 7) {
         await interaction.member.roles.add("1443766259995901952");
         await interaction.member.roles.remove("1443766165536247808");
-        return `✅ Score of ${score} found. Phase 2 roles granted.`;
+        return `✅ Passed with ${score}.`;
     }
-    return `❌ Score is ${score}. You need 7 or higher.`;
+
+    return `❌ Score ${score}/7 required.`;
 }
 
-/**
- * RANK COMMAND LOGIC
- * Uses MAIN_SHEET_ID
- */
+// --- ROLE AUTO SYSTEM ---
+async function handleAutoRoles(member, newRank) {
+
+    const roleMap = {
+
+    // --- JET ---
+    "Jet Trooper": { add: ["1369082109435838508"], remove: [] },
+    "Senior Jet Trooper": { add: ["1443792369882239067"], remove: ["1369082109435838508"] },
+    "Veteran Jet Trooper": { add: ["1445500320775016469"], remove: ["1443792369882239067"] },
+
+    "Jet Specialist": { add: ["1445500422147281039"], remove: ["1445500320775016469"] },
+    "Jet Corporal": { add: ["1445500469622345921"], remove: ["1445500422147281039"] },
+
+    // --- FLAME ---
+    "Flame Trooper": { add: ["1443791781811454013"], remove: [] },
+    "Senior Flame Trooper": { add: ["1389915192984604875"], remove: ["1443791781811454013"] },
+    "Veteran Flame Trooper": { add: ["1457209493644640297"], remove: ["1389915192984604875"] },
+
+    "Flame Specialist": { add: ["1457209610875437137"], remove: ["1457209493644640297"] },
+    "Flame Corporal": { add: ["1457209756015136979"], remove: ["1457209610875437137"] }
+};
+
+    const config = roleMap[newRank];
+    if (!config) return;
+
+    try {
+        if (config.remove.length) await member.roles.remove(config.remove);
+        if (config.add.length) await member.roles.add(config.add);
+    } catch (err) {
+        console.error("Role error:", err);
+    }
+}
+
+// --- RANK ---
 async function transferUser(auth, username, discordUser, newRank, interaction, webhook) {
     const sheets = getSheets(auth);
+
+    if (!discordUser) return "❌ Invalid Discord user.";
+
     const member = await interaction.guild.members.fetch(discordUser.id);
 
-    // --- RECRUIT TRANSFERS ---
-    if (newRank.endsWith("Recruit")) {
+    // --- RECRUITS ---
+    if (newRank.includes("Recruit")) {
+
         const isJet = newRank.includes("Jet");
-        
-        // Update Sheets
-        const pRes = await sheets.spreadsheets.values.get({ spreadsheetId: MAIN_SHEET_ID, range: 'PLACEMENT!B:D' });
-        const pIdx = (pRes.data.values || []).findIndex(r => r[0] && r[0].toLowerCase() === username.toLowerCase());
-        
+
+        const pRes = await sheets.spreadsheets.values.get({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: 'PLACEMENT!B:D'
+        });
+
+        const pIdx = (pRes.data.values || []).findIndex(r =>
+            r[0] && r[0].toLowerCase() === username.toLowerCase()
+        );
+
         if (pIdx !== -1) {
             const joinDate = pRes.data.values[pIdx][2];
-            // Clear Placement
+
             await sheets.spreadsheets.values.update({
-                spreadsheetId: MAIN_SHEET_ID, range: `PLACEMENT!B${pIdx + 1}:G${pIdx + 1}`,
-                valueInputOption: 'USER_ENTERED', requestBody: { values: [["N/A", "PHASE1", "01/01/2026", "FALSE", 0, "FALSE"]] }
+                spreadsheetId: MAIN_SHEET_ID,
+                range: `PLACEMENT!B${pIdx + 1}:G${pIdx + 1}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [["N/A", "PHASE1", "01/01/2026", "FALSE", 0, "FALSE"]] }
             });
-            // Add to RECRUITS
+
             await sheets.spreadsheets.values.append({
-                spreadsheetId: MAIN_SHEET_ID, range: '💂RECRUITS!B:D',
-                valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, newRank, joinDate]] }
+                spreadsheetId: MAIN_SHEET_ID,
+                range: 'RECRUITS!B:D', // ✅ FIXED (NO EMOJI)
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[username, newRank, joinDate]] }
             });
         }
 
-        // Roles
         if (isJet) {
-            await member.roles.add(["1468755195419689073", "1369082109184053476"]);
-            await member.roles.remove(["1443766259995901952", "1378869378178879578"]);
+            await member.roles.add(["1468755195419689073"]);
         } else {
-            await member.roles.add(["1468755302244679926", "1369082109184053476"]);
-            await member.roles.remove(["1443766259995901952", "1378869378178879578"]);
+            await member.roles.add(["1468755302244679926"]);
         }
+
         return `✅ Ranked ${username} to ${newRank}.`;
     }
 
-    // --- SUB-RANK MAPPINGS ---
-    const rankMaps = {
-        "Jet Trooper": { add: ["1443389199645409393", "1387471508816793610", "1369082109435838508"], rem: ["1399091736856236053", "1468755195419689073"] },
-        "Flame Trooper": { add: ["1369082109435838504", "1443791781811454013", "1443389267652120667"], rem: ["1468755302244679926", "1399091736856236053"] },
-        "Senior Jet Trooper": { add: ["1443792369882239067"], rem: ["1369082109435838508"] },
-        "Veteran Jet Trooper": { add: ["1445500320775016469"], rem: ["1443792369882239067"] },
-        "Master Jet Trooper": { add: ["1451525281410973706"], rem: ["1445500320775016469"] },
-        "Senior Flame Trooper": { add: ["1389915192984604875"], rem: ["1443791781811454013"] },
-        "Veteran Flame Trooper": { add: ["1457209493644640297"], rem: ["1389915192984604875"] },
-        "Master Flame Trooper": { add: ["1457209569733513307"], rem: ["1457209493644640297"] }
-    };
+    // --- AUTO ROLES ---
+    await handleAutoRoles(member, newRank);
 
-    if (rankMaps[newRank]) {
-        await member.roles.add(rankMaps[newRank].add);
-        await member.roles.remove(rankMaps[newRank].rem);
-        return `✅ Ranked ${username} to ${newRank}.`;
-    }
-    return "❌ Invalid Rank.";
+    return `✅ Ranked ${username} to ${newRank}.`;
 }
 
 module.exports = { handleBGC, handlePromotionTest, transferUser };

@@ -110,7 +110,7 @@ async function processLog(auth, spreadsheetId, input, isWeekend, executorPing, w
         eventType: eventType.trim()
     };
 
-    const tabsToLoad = ["💂RECRUITS", "FLAMETROOPER COMPANY", "JETPACK COMPANY", "DIVISIONAL STAFF", "HIGH COMMAND"];
+    const tabsToLoad = ["RECRUITS", "FLAMETROOPER COMPANY", "JETPACK COMPANY", "DIVISIONAL STAFF", "HIGH COMMAND"];
     const sheetData = {};
 
     for (const tab of tabsToLoad) {
@@ -123,16 +123,16 @@ async function processLog(auth, spreadsheetId, input, isWeekend, executorPing, w
     // --- ATTENDEE LOGIC ---
     for (const username of data.attendees) {
         // Recruits Tab
-        let recruitIdx = sheetData["💂RECRUITS"].findIndex(r => normalizeName(r[1]) === username);
+        let recruitIdx = sheetData["RECRUITS"].findIndex(r => normalizeName(r[1]) === username);
         if (recruitIdx !== -1) {
             const row = recruitIdx + 1;
             if (data.eventType.toLowerCase().includes("patrol")) {
-                await updateCell(sheets, MAIN_SHEET_ID, "💂RECRUITS", `E${row}`, 1);
+                await updateCell(sheets, MAIN_SHEET_ID, "RECRUITS", `E${row}`, 1);
                 logResults.push(`${username}: +1 Patrol Point`);
             }
             if (data.eventType.toLowerCase().includes("pt") || data.eventType.toLowerCase().includes("physical")) {
                 await sheets.spreadsheets.values.update({
-                    spreadsheetId: MAIN_SHEET_ID, range: `💂RECRUITS!F${row}`,
+                    spreadsheetId: MAIN_SHEET_ID, range: `RECRUITS!F${row}`,
                     valueInputOption: 'USER_ENTERED', requestBody: { values: [["TRUE"]] }
                 });
                 logResults.push(`${username}: PT marked TRUE`);

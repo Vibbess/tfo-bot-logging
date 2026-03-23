@@ -11,24 +11,24 @@ const {
 const { google } = require('googleapis');
 const fs = require('fs');
 
-// Project-specific imports
+// Project-specific
 const { transferUser, handleBGC, handlePromotionTest } = require('./ranker');
 const { processLog, processTimeLog } = require('./logger');
 
 // --- CONFIG ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o";
-const ALLOWED_GUILD_ID = "1369082109184053469"; 
-const OWNER_ID = "1097605097502015539"; 
+const ALLOWED_GUILD_ID = "1369082109184053469";
+const OWNER_ID = "1097605097502015539";
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const TOKEN_PATH = './tokens.json';
 const PERMS_PATH = './permissions.json';
 
-// Role Constants
-const AUTH_ROLE_ID = "1369082109184053474"; 
+// Roles
+const AUTH_ROLE_ID = "1369082109184053474";
 const PROMO_REQ_ROLE_ID = "1443766165536247808";
 
-// --- DATABASE HELPERS ---
+// --- PERMISSIONS ---
 const getPermissions = () => {
     if (!fs.existsSync(PERMS_PATH)) return {};
     try {
@@ -45,11 +45,12 @@ const savePermissions = (perms) => {
 function isAuthorized(member, commandName) {
     if (member.id === OWNER_ID) return true;
     if (member.roles.cache.has(AUTH_ROLE_ID)) return true;
+
     const perms = getPermissions();
     return perms[member.id] && perms[member.id].includes(commandName);
 }
 
-// --- GOOGLE OAUTH SETUP ---
+// --- GOOGLE OAUTH ---
 let oAuth2Client;
 
 try {
@@ -78,13 +79,13 @@ if (WEBHOOK_URL && WEBHOOK_URL.startsWith('http')) {
 }
 
 // --- CLIENT ---
-const client = new Client({ 
+const client = new Client({
     intents: [
-        GatewayIntentBits.Guilds, 
-        GatewayIntentBits.GuildMembers, 
-        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent
-    ] 
+    ]
 });
 
 // --- TOKEN HANDLER ---
@@ -118,16 +119,16 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('confirm')
-        .setDescription('Enter the code from Google')
+        .setDescription('Enter the Google code')
         .addStringOption(o =>
             o.setName('code')
-             .setDescription('The code from the URL')
+             .setDescription('Code from Google')
              .setRequired(true)
         ),
 
     new SlashCommandBuilder()
         .setName('authorize')
-        .setDescription('Auth a user for a command (Owner Only)')
+        .setDescription('Authorize user (Owner only)')
         .addUserOption(o =>
             o.setName('user')
              .setDescription('User to authorize')
@@ -135,18 +136,19 @@ const commands = [
         )
         .addStringOption(o =>
             o.setName('command')
-             .setDescription('Command to allow')
+             .setDescription('Command name')
              .setRequired(true)
              .addChoices(
                 { name: 'rank', value: 'rank' },
                 { name: 'eventlog', value: 'eventlog' },
-                { name: 'bgc', value: 'bgc' }
+                { name: 'bgc', value: 'bgc' },
+                { name: 'timelog', value: 'timelog' }
              )
         ),
 
     new SlashCommandBuilder()
         .setName('bgc')
-        .setDescription('Run Background Check')
+        .setDescription('Run background check')
         .addStringOption(o =>
             o.setName('robloxuserid')
              .setDescription('Roblox user ID')
@@ -167,9 +169,10 @@ const commands = [
              .setRequired(true)
         ),
 
+    // ✅ FIXED SINGLE RANK COMMAND
     new SlashCommandBuilder()
         .setName('rank')
-        .setDescription('Promote/Transfer User')
+        .setDescription('Promote user')
         .addStringOption(o =>
             o.setName('robloxusername')
              .setDescription('Roblox username')
@@ -185,39 +188,46 @@ const commands = [
              .setDescription('New rank')
              .setRequired(true)
              .addChoices(
-                {name:'Jet Recruit', value:'Jet Recruit'},
-                {name:'Flame Recruit', value:'Flame Recruit'},
-                {name:'Jet Trooper', value:'Jet Trooper'},
-                {name:'Flame Trooper', value:'Flame Trooper'},
-                {name:'Senior Jet Trooper', value:'Senior Jet Trooper'},
-                {name:'Senior Flame Trooper', value:'Senior Flame Trooper'},
-                {name:'Veteran Jet Trooper', value:'Veteran Jet Trooper'},
-                {name:'Veteran Flame Trooper', value:'Veteran Flame Trooper'},
-                {name:'Master Jet Trooper', value:'Master Jet Trooper'},
-                {name:'Master Flame Trooper', value:'Master Flame Trooper'}
+                { name:'Jet Recruit', value:'Jet Recruit' },
+                { name:'Flame Recruit', value:'Flame Recruit' },
+
+                { name:'Jet Trooper', value:'Jet Trooper' },
+                { name:'Flame Trooper', value:'Flame Trooper' },
+
+                { name:'Senior Jet Trooper', value:'Senior Jet Trooper' },
+                { name:'Senior Flame Trooper', value:'Senior Flame Trooper' },
+
+                { name:'Veteran Jet Trooper', value:'Veteran Jet Trooper' },
+                { name:'Veteran Flame Trooper', value:'Veteran Flame Trooper' },
+
+                { name:'Jet Specialist', value:'Jet Specialist' },
+                { name:'Flame Specialist', value:'Flame Specialist' },
+
+                { name:'Jet Corporal', value:'Jet Corporal' },
+                { name:'Flame Corporal', value:'Flame Corporal' }
              )
         ),
 
     new SlashCommandBuilder()
         .setName('eventlog')
-        .setDescription('Log an event')
+        .setDescription('Log event')
         .addStringOption(o =>
             o.setName('input')
-             .setDescription('Event log text')
+             .setDescription('Log text')
              .setRequired(true)
         )
         .addBooleanOption(o =>
             o.setName('weekend')
-             .setDescription('Is weekend')
+             .setDescription('Weekend?')
              .setRequired(true)
         ),
 
     new SlashCommandBuilder()
         .setName('timelog')
-        .setDescription('Log in-game activity hours')
+        .setDescription('Log time')
         .addStringOption(o =>
             o.setName('input')
-             .setDescription('Time log text')
+             .setDescription('Time log')
              .setRequired(true)
         )
 
@@ -236,32 +246,25 @@ client.on('interactionCreate', async (interaction) => {
             scope: ['https://www.googleapis.com/auth/spreadsheets']
         });
 
-        return interaction.reply({
-            content: `🔗 [Click here to verify](${url})`,
-            flags: [MessageFlags.Ephemeral]
-        });
+        return interaction.reply({ content: `🔗 ${url}`, flags: [MessageFlags.Ephemeral] });
     }
 
     if (commandName === 'confirm') {
-        const code = options.getString('code');
-
         try {
+            const code = options.getString('code');
             const { tokens } = await oAuth2Client.getToken(code);
-            const db = fs.existsSync(TOKEN_PATH) ? JSON.parse(fs.readFileSync(TOKEN_PATH)) : {};
+
+            const db = fs.existsSync(TOKEN_PATH)
+                ? JSON.parse(fs.readFileSync(TOKEN_PATH))
+                : {};
 
             db[user.id] = tokens;
             fs.writeFileSync(TOKEN_PATH, JSON.stringify(db, null, 2));
 
-            return interaction.reply({
-                content: "✅ Verified!",
-                flags: [MessageFlags.Ephemeral]
-            });
+            return interaction.reply({ content: "✅ Verified!", flags: [MessageFlags.Ephemeral] });
 
         } catch {
-            return interaction.reply({
-                content: "❌ Invalid code.",
-                flags: [MessageFlags.Ephemeral]
-            });
+            return interaction.reply({ content: "❌ Invalid code.", flags: [MessageFlags.Ephemeral] });
         }
     }
 
@@ -280,7 +283,7 @@ client.on('interactionCreate', async (interaction) => {
         savePermissions(perms);
 
         return interaction.reply({
-            content: `✅ Authorized <@${target.id}> for \`/${cmd}\`.`,
+            content: `✅ Authorized <@${target.id}> for /${cmd}`,
             flags: [MessageFlags.Ephemeral]
         });
     }
@@ -292,44 +295,67 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (commandName === 'request' && !member.roles.cache.has(PROMO_REQ_ROLE_ID)) {
-        return interaction.reply({
-            content: "❌ You need the Promotion Test role.",
-            flags: [MessageFlags.Ephemeral]
-        });
+        return interaction.reply({ content: "❌ Missing role.", flags: [MessageFlags.Ephemeral] });
     }
 
     await interaction.deferReply();
 
     const auth = await getUserAuth(user.id);
-    if (!auth) return interaction.editReply("❌ Please run `/verify` first.");
+    if (!auth) return interaction.editReply("❌ Run /verify first.");
 
     try {
         switch (commandName) {
 
             case 'bgc':
-                return interaction.editReply(await handleBGC(auth, options.getString('robloxuserid'), options.getUser('discorduser'), interaction, webhook));
+                return interaction.editReply(
+                    await handleBGC(auth, options.getString('robloxuserid'), options.getUser('discorduser'), interaction, webhook)
+                );
 
             case 'request':
-                return interaction.editReply(await handlePromotionTest(auth, options.getString('robloxusername'), interaction));
+                return interaction.editReply(
+                    await handlePromotionTest(auth, options.getString('robloxusername'), interaction)
+                );
 
             case 'rank':
-                return interaction.editReply(await transferUser(auth, options.getString('robloxusername'), options.getUser('discorduser'), options.getString('new_rank'), interaction, webhook));
+                return interaction.editReply(
+                    await transferUser(
+                        auth,
+                        options.getString('robloxusername'),
+                        options.getUser('discorduser'),
+                        options.getString('new_rank'),
+                        interaction,
+                        webhook
+                    )
+                );
 
             case 'eventlog':
-                return interaction.editReply(await processLog(auth, MAIN_SHEET_ID, options.getString('input'), options.getBoolean('weekend'), `<@${user.id}>`, webhook));
+                return interaction.editReply(
+                    await processLog(auth, MAIN_SHEET_ID,
+                        options.getString('input'),
+                        options.getBoolean('weekend'),
+                        `<@${user.id}>`,
+                        webhook
+                    )
+                );
 
             case 'timelog':
-                return interaction.editReply(await processTimeLog(auth, options.getString('input'), `<@${user.id}>`, webhook));
+                return interaction.editReply(
+                    await processTimeLog(auth,
+                        options.getString('input'),
+                        `<@${user.id}>`,
+                        webhook
+                    )
+                );
         }
 
-    } catch (error) {
-        console.error(error);
-        await interaction.editReply(`System Error: ${error.message}`);
+    } catch (err) {
+        console.error(err);
+        return interaction.editReply(`❌ Error: ${err.message}`);
     }
 });
 
 // --- READY ---
-client.once('ready', async (c) => {
+client.once('clientReady', async (c) => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
     try {
@@ -340,8 +366,7 @@ client.once('ready', async (c) => {
             { body: commands }
         );
 
-        console.log(`✅ Commands registered.`);
-
+        console.log("✅ Commands registered.");
     } catch (err) {
         console.error(err);
     }
