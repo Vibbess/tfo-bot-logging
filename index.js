@@ -1,375 +1,298 @@
 require('dotenv').config();
-const { 
-    Client, 
-    GatewayIntentBits, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder, 
-    WebhookClient, 
-    MessageFlags 
+
+const {
+    Client,
+    GatewayIntentBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    WebhookClient
 } = require('discord.js');
-const { google } = require('googleapis');
-const fs = require('fs');
 
-// Project-specific
-const { transferUser, handleBGC, handlePromotionTest } = require('./ranker');
-const { processLog, processTimeLog } = require('./logger');
+const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { JWT } = require('google-auth-library');
+const creds = require('./credentials.json');
 
-// --- CONFIG ---
+const { transferUser, runBGC, handleRequest } = require('./ranker');
+const { processEvent } = require('./logger');
+
 const TOKEN = process.env.DISCORD_TOKEN;
+
 const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o";
-const ALLOWED_GUILD_ID = "1369082109184053469";
-const OWNER_ID = "1097605097502015539";
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const TOKEN_PATH = './tokens.json';
-const PERMS_PATH = './permissions.json';
+const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM";
 
-// Roles
-const AUTH_ROLE_ID = "1369082109184053474";
-const PROMO_REQ_ROLE_ID = "1443766165536247808";
+const GUILD_ID = "1469734105292865768";
 
-// --- PERMISSIONS ---
-const getPermissions = () => {
-    if (!fs.existsSync(PERMS_PATH)) return {};
-    try {
-        return JSON.parse(fs.readFileSync(PERMS_PATH));
-    } catch {
-        return {};
-    }
-};
+/* ================= ROLE IDS ================= */
+const AUTH_ROLE = "1369082109184053474";
+const REQUEST_ROLE = "1443766165536247808";
 
-const savePermissions = (perms) => {
-    fs.writeFileSync(PERMS_PATH, JSON.stringify(perms, null, 2));
-};
+/* ================= CHANNELS ================= */
+const WELCOME_CHANNEL = "1468756387562782732";
 
-function isAuthorized(member, commandName) {
-    if (member.id === OWNER_ID) return true;
-    if (member.roles.cache.has(AUTH_ROLE_ID)) return true;
+/* ================= WEBHOOK ================= */
+const webhook = process.env.WEBHOOK_URL
+    ? new WebhookClient({ url: process.env.WEBHOOK_URL })
+    : null;
 
-    const perms = getPermissions();
-    return perms[member.id] && perms[member.id].includes(commandName);
-}
-
-// --- GOOGLE OAUTH ---
-let oAuth2Client;
-
-try {
-    const credentials = JSON.parse(fs.readFileSync('client_secret.json'));
-    const config = credentials.web || credentials.installed;
-
-    if (!config) throw new Error("Invalid client_secret.json");
-
-    const { client_id, client_secret, redirect_uris } = config;
-
-    oAuth2Client = new google.auth.OAuth2(
-        client_id,
-        client_secret,
-        redirect_uris[0]
-    );
-
-} catch (err) {
-    console.error("❌ Failed to load client_secret.json:", err.message);
-    process.exit(1);
-}
-
-// --- WEBHOOK ---
-let webhook = null;
-if (WEBHOOK_URL && WEBHOOK_URL.startsWith('http')) {
-    webhook = new WebhookClient({ url: WEBHOOK_URL });
-}
-
-// --- CLIENT ---
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
+/* ================= GOOGLE AUTH ================= */
+const auth = new JWT({
+    email: creds.client_email,
+    key: creds.private_key,
+    scopes: ['https://www.googleapis.com/auth/spreadsheets'],
 });
 
-// --- TOKEN HANDLER ---
-async function getUserAuth(userId) {
-    if (!fs.existsSync(TOKEN_PATH)) return null;
+const mainDoc = new GoogleSpreadsheet(MAIN_SHEET_ID, auth);
+const dataDoc = new GoogleSpreadsheet(DATA_SHEET_ID, auth);
 
-    try {
-        const db = JSON.parse(fs.readFileSync(TOKEN_PATH));
-        const userTokens = db[userId];
-        if (!userTokens) return null;
+/* ================= CLIENT ================= */
+const client = new Client({
+    intents: [GatewayIntentBits.Guilds]
+});
 
-        const auth = new google.auth.OAuth2(
-            oAuth2Client._clientId,
-            oAuth2Client._clientSecret,
-            oAuth2Client.redirectUri
-        );
-
-        auth.setCredentials(userTokens);
-        return auth;
-    } catch {
-        return null;
-    }
-}
-
-// --- COMMANDS ---
-const commands = [
-
-    new SlashCommandBuilder()
-        .setName('verify')
-        .setDescription('Link your Google account'),
-
-    new SlashCommandBuilder()
-        .setName('confirm')
-        .setDescription('Enter the Google code')
-        .addStringOption(o =>
-            o.setName('code')
-             .setDescription('Code from Google')
-             .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
-        .setName('authorize')
-        .setDescription('Authorize user (Owner only)')
-        .addUserOption(o =>
-            o.setName('user')
-             .setDescription('User to authorize')
-             .setRequired(true)
-        )
-        .addStringOption(o =>
-            o.setName('command')
-             .setDescription('Command name')
-             .setRequired(true)
-             .addChoices(
-                { name: 'rank', value: 'rank' },
-                { name: 'eventlog', value: 'eventlog' },
-                { name: 'bgc', value: 'bgc' },
-                { name: 'timelog', value: 'timelog' }
-             )
-        ),
-
-    new SlashCommandBuilder()
-        .setName('bgc')
-        .setDescription('Run background check')
-        .addStringOption(o =>
-            o.setName('robloxuserid')
-             .setDescription('Roblox user ID')
-             .setRequired(true)
-        )
-        .addUserOption(o =>
-            o.setName('discorduser')
-             .setDescription('Discord user')
-             .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
-        .setName('request')
-        .setDescription('Request promotion test')
-        .addStringOption(o =>
-            o.setName('robloxusername')
-             .setDescription('Roblox username')
-             .setRequired(true)
-        ),
-
-    // ✅ FIXED SINGLE RANK COMMAND
-    new SlashCommandBuilder()
-        .setName('rank')
-        .setDescription('Promote user')
-        .addStringOption(o =>
-            o.setName('robloxusername')
-             .setDescription('Roblox username')
-             .setRequired(true)
-        )
-        .addUserOption(o =>
-            o.setName('discorduser')
-             .setDescription('Discord user')
-             .setRequired(true)
-        )
-        .addStringOption(o =>
-            o.setName('new_rank')
-             .setDescription('New rank')
-             .setRequired(true)
-             .addChoices(
-                { name:'Jet Recruit', value:'Jet Recruit' },
-                { name:'Flame Recruit', value:'Flame Recruit' },
-
-                { name:'Jet Trooper', value:'Jet Trooper' },
-                { name:'Flame Trooper', value:'Flame Trooper' },
-
-                { name:'Senior Jet Trooper', value:'Senior Jet Trooper' },
-                { name:'Senior Flame Trooper', value:'Senior Flame Trooper' },
-
-                { name:'Veteran Jet Trooper', value:'Veteran Jet Trooper' },
-                { name:'Veteran Flame Trooper', value:'Veteran Flame Trooper' },
-
-                { name:'Jet Specialist', value:'Jet Specialist' },
-                { name:'Flame Specialist', value:'Flame Specialist' },
-
-                { name:'Jet Corporal', value:'Jet Corporal' },
-                { name:'Flame Corporal', value:'Flame Corporal' }
-             )
-        ),
-
-    new SlashCommandBuilder()
-        .setName('eventlog')
-        .setDescription('Log event')
-        .addStringOption(o =>
-            o.setName('input')
-             .setDescription('Log text')
-             .setRequired(true)
-        )
-        .addBooleanOption(o =>
-            o.setName('weekend')
-             .setDescription('Weekend?')
-             .setRequired(true)
-        ),
-
-    new SlashCommandBuilder()
-        .setName('timelog')
-        .setDescription('Log time')
-        .addStringOption(o =>
-            o.setName('input')
-             .setDescription('Time log')
-             .setRequired(true)
-        )
-
-].map(cmd => cmd.toJSON());
-
-// --- INTERACTIONS ---
+/* ================= INTERACTIONS ================= */
 client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isChatInputCommand() || interaction.guildId !== ALLOWED_GUILD_ID) return;
-
-    const { commandName, user, options, member } = interaction;
-
-    if (commandName === 'verify') {
-        const url = oAuth2Client.generateAuthUrl({
-            access_type: 'offline',
-            prompt: 'consent',
-            scope: ['https://www.googleapis.com/auth/spreadsheets']
-        });
-
-        return interaction.reply({ content: `🔗 ${url}`, flags: [MessageFlags.Ephemeral] });
-    }
-
-    if (commandName === 'confirm') {
-        try {
-            const code = options.getString('code');
-            const { tokens } = await oAuth2Client.getToken(code);
-
-            const db = fs.existsSync(TOKEN_PATH)
-                ? JSON.parse(fs.readFileSync(TOKEN_PATH))
-                : {};
-
-            db[user.id] = tokens;
-            fs.writeFileSync(TOKEN_PATH, JSON.stringify(db, null, 2));
-
-            return interaction.reply({ content: "✅ Verified!", flags: [MessageFlags.Ephemeral] });
-
-        } catch {
-            return interaction.reply({ content: "❌ Invalid code.", flags: [MessageFlags.Ephemeral] });
-        }
-    }
-
-    if (commandName === 'authorize') {
-        if (user.id !== OWNER_ID) {
-            return interaction.reply({ content: "❌ Owner only.", flags: [MessageFlags.Ephemeral] });
-        }
-
-        const target = options.getUser('user');
-        const cmd = options.getString('command');
-
-        const perms = getPermissions();
-        if (!perms[target.id]) perms[target.id] = [];
-
-        if (!perms[target.id].includes(cmd)) perms[target.id].push(cmd);
-        savePermissions(perms);
-
-        return interaction.reply({
-            content: `✅ Authorized <@${target.id}> for /${cmd}`,
-            flags: [MessageFlags.Ephemeral]
-        });
-    }
-
-    const protectedCmds = ['rank', 'eventlog', 'bgc', 'timelog'];
-
-    if (protectedCmds.includes(commandName) && !isAuthorized(member, commandName)) {
-        return interaction.reply({ content: "❌ Unauthorized.", flags: [MessageFlags.Ephemeral] });
-    }
-
-    if (commandName === 'request' && !member.roles.cache.has(PROMO_REQ_ROLE_ID)) {
-        return interaction.reply({ content: "❌ Missing role.", flags: [MessageFlags.Ephemeral] });
-    }
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.guildId !== GUILD_ID) return;
 
     await interaction.deferReply();
 
-    const auth = await getUserAuth(user.id);
-    if (!auth) return interaction.editReply("❌ Run /verify first.");
-
     try {
-        switch (commandName) {
 
-            case 'bgc':
-                return interaction.editReply(
-                    await handleBGC(auth, options.getString('robloxuserid'), options.getUser('discorduser'), interaction, webhook)
-                );
+        /* ================= AUTHORIZE ================= */
+        if (interaction.commandName === 'authorize') {
 
-            case 'request':
-                return interaction.editReply(
-                    await handlePromotionTest(auth, options.getString('robloxusername'), interaction)
-                );
+            if (!interaction.member.roles.cache.has(AUTH_ROLE)) {
+                return interaction.editReply("❌ You are not authorized.");
+            }
 
-            case 'rank':
-                return interaction.editReply(
-                    await transferUser(
-                        auth,
-                        options.getString('robloxusername'),
-                        options.getUser('discorduser'),
-                        options.getString('new_rank'),
-                        interaction,
-                        webhook
-                    )
-                );
+            const user = interaction.options.getUser('user');
+            const member = await interaction.guild.members.fetch(user.id);
 
-            case 'eventlog':
-                return interaction.editReply(
-                    await processLog(auth, MAIN_SHEET_ID,
-                        options.getString('input'),
-                        options.getBoolean('weekend'),
-                        `<@${user.id}>`,
-                        webhook
-                    )
-                );
+            await member.roles.add(AUTH_ROLE);
 
-            case 'timelog':
-                return interaction.editReply(
-                    await processTimeLog(auth,
-                        options.getString('input'),
-                        `<@${user.id}>`,
-                        webhook
-                    )
-                );
+            return interaction.editReply(`✅ Authorized ${user.tag}`);
+        }
+
+        /* ================= REQUEST ================= */
+        if (interaction.commandName === 'request') {
+
+            if (!interaction.member.roles.cache.has(REQUEST_ROLE)) {
+                return interaction.editReply("❌ You cannot use this.");
+            }
+
+            const username = interaction.options.getString('username');
+
+            const result = await handleRequest(mainDoc, dataDoc, username, interaction);
+            return interaction.editReply(result);
+        }
+
+        /* ================= RANK ================= */
+        if (interaction.commandName === 'rank') {
+
+            if (!interaction.member.roles.cache.has(AUTH_ROLE)) {
+                return interaction.editReply("❌ Not authorized.");
+            }
+
+            const username = interaction.options.getString('username');
+            const user = interaction.options.getUser('user');
+            const fromRank = interaction.options.getString('current_rank');
+            const toRank = interaction.options.getString('new_rank');
+
+            const result = await transferUser(
+                mainDoc,
+                username,
+                user,
+                fromRank,
+                toRank,
+                interaction,
+                webhook
+            );
+
+            /* ===== WELCOME MESSAGE ===== */
+            if (toRank.includes("Recruit")) {
+                const channel = interaction.guild.channels.cache.get(WELCOME_CHANNEL);
+
+                if (channel) {
+                    await channel.send(
+`<@${user.id}>
+
+> <:FNTC:1443781891349155890> | **WELCOME TO THE FN TROOPER CORPS!**
+>
+> Please ensure to inspect all the channels that follow:
+>
+> https://discord.com/channels/1369082109184053469/1468755814134059089 - Trial Information.
+> https://discord.com/channels/1369082109184053469/1403795268507533393 - Request your promotion here once you finish your trial.
+> https://discord.com/channels/1369082109184053469/1369082110006267988 - Server rules.
+> https://discord.com/channels/1369082109184053469/1443405151149752452 - Frequently asked questions can be found here.
+> https://discord.com/channels/1369082109184053469/1369082110006267989 - Read our documents.
+>
+> -# Signed,
+> -# FN Trooper Corps, Officer Team`
+                    );
+                }
+            }
+
+            return interaction.editReply(result);
+        }
+
+        /* ================= BGC ================= */
+        if (interaction.commandName === 'bgc') {
+
+            const robloxId = interaction.options.getString('robloxid');
+            const user = interaction.options.getUser('user');
+
+            const result = await runBGC(
+                mainDoc,
+                robloxId,
+                user,
+                interaction,
+                webhook
+            );
+
+            return interaction.editReply(result);
+        }
+
+        /* ================= EVENT ================= */
+        if (interaction.commandName === 'eventlog') {
+
+            const type = interaction.options.getString('eventtype');
+            const weekend = interaction.options.getBoolean('weekend');
+
+            const result = await processEvent(
+                mainDoc,
+                type,
+                weekend,
+                interaction,
+                webhook
+            );
+
+            return interaction.editReply(result);
         }
 
     } catch (err) {
-        console.error(err);
-        return interaction.editReply(`❌ Error: ${err.message}`);
+        console.error("ERROR:", err);
+        return interaction.editReply(`❌ System Error: ${err.message}`);
     }
 });
 
-// --- READY ---
-client.once('clientReady', async (c) => {
+/* ================= READY ================= */
+client.once('clientReady', async () => {
+    console.log(`✅ Logged in as ${client.user.tag}`);
+
     const rest = new REST({ version: '10' }).setToken(TOKEN);
 
-    try {
-        console.log(`Logged in as ${c.user.tag}`);
+    const commands = [
 
+        /* AUTHORIZE */
+        new SlashCommandBuilder()
+            .setName('authorize')
+            .setDescription('Authorize a user')
+            .addUserOption(o =>
+                o.setName('user')
+                    .setDescription('User to authorize')
+                    .setRequired(true)
+            ),
+
+        /* REQUEST */
+        new SlashCommandBuilder()
+            .setName('request')
+            .setDescription('Request promotion test')
+            .addStringOption(o =>
+                o.setName('username')
+                    .setDescription('Roblox username')
+                    .setRequired(true)
+            ),
+
+        /* RANK */
+        new SlashCommandBuilder()
+            .setName('rank')
+            .setDescription('Rank a user')
+            .addStringOption(o =>
+                o.setName('username')
+                    .setDescription('Roblox username')
+                    .setRequired(true)
+            )
+            .addUserOption(o =>
+                o.setName('user')
+                    .setDescription('Discord user')
+                    .setRequired(true)
+            )
+            .addStringOption(o =>
+                o.setName('current_rank')
+                    .setDescription('Current rank')
+                    .setRequired(true)
+                    .addChoices(
+                        { name: 'Jet Recruit', value: 'Jet Recruit' },
+                        { name: 'Flame Recruit', value: 'Flame Recruit' },
+                        { name: 'Jet Trooper', value: 'Jet Trooper' },
+                        { name: 'Flame Trooper', value: 'Flame Trooper' },
+                        { name: 'Specialist', value: 'Specialist' },
+                        { name: 'Corporal', value: 'Corporal' }
+                    )
+            )
+            .addStringOption(o =>
+                o.setName('new_rank')
+                    .setDescription('New rank')
+                    .setRequired(true)
+                    .addChoices(
+                        { name: 'Jet Recruit', value: 'Jet Recruit' },
+                        { name: 'Flame Recruit', value: 'Flame Recruit' },
+                        { name: 'Jet Trooper', value: 'Jet Trooper' },
+                        { name: 'Flame Trooper', value: 'Flame Trooper' },
+                        { name: 'Specialist', value: 'Specialist' },
+                        { name: 'Corporal', value: 'Corporal' }
+                    )
+            ),
+
+        /* BGC */
+        new SlashCommandBuilder()
+            .setName('bgc')
+            .setDescription('Run BGC check')
+            .addStringOption(o =>
+                o.setName('robloxid')
+                    .setDescription('Roblox User ID')
+                    .setRequired(true)
+            )
+            .addUserOption(o =>
+                o.setName('user')
+                    .setDescription('Discord user')
+                    .setRequired(true)
+            ),
+
+        /* EVENT */
+        new SlashCommandBuilder()
+            .setName('eventlog')
+            .setDescription('Log event')
+            .addStringOption(o =>
+                o.setName('eventtype')
+                    .setDescription('Type')
+                    .setRequired(true)
+                    .addChoices(
+                        { name: 'Patrol', value: 'patrol' },
+                        { name: 'PT', value: 'pt' },
+                        { name: 'Tryout', value: 'tryout' },
+                        { name: 'General', value: 'general' }
+                    )
+            )
+            .addBooleanOption(o =>
+                o.setName('weekend')
+                    .setDescription('Weekend event?')
+                    .setRequired(true)
+            )
+    ];
+
+    try {
         await rest.put(
-            Routes.applicationGuildCommands(c.user.id, ALLOWED_GUILD_ID),
+            Routes.applicationGuildCommands(client.user.id, GUILD_ID),
             { body: commands }
         );
 
         console.log("✅ Commands registered.");
     } catch (err) {
-        console.error(err);
+        console.error("Command Error:", err);
     }
 });
 
+/* ================= LOGIN ================= */
 client.login(TOKEN);

@@ -1,195 +1,190 @@
 const { google } = require('googleapis');
-const axios = require('axios');
 
-const getSheets = (auth) => google.sheets({ version: 'v4', auth });
-
-// --- CONFIG ---
 const MAIN_SHEET_ID = "1u3GspLjvQybVx4mFOd_8pxmppCHzvL2W_GFh3xp3T7o";
-const DATA_SHEET_ID = "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM";
 
-const MARK = "✅";
-const XMARK = "❌";
-
-// --- ROBLOX FETCH ---
-async function fetchRobloxData(userId) {
-    try {
-        const userRes = await axios.get(`https://users.roblox.com/v1/users/${userId}`);
-        const joinDate = new Date(userRes.data.created);
-
-        const badgeRes = await axios.get(`https://badges.roblox.com/v1/users/${userId}/badges?limit=50&sortOrder=Desc`);
-
-        return {
-            joinDate,
-            badgeCount: badgeRes.data.data.length,
-            username: userRes.data.name
-        };
-    } catch {
-        return null;
-    }
+function getSheets(auth) {
+    return google.sheets({ version: 'v4', auth });
 }
 
-// --- BGC ---
-async function handleBGC(auth, robloxId, discordUser, interaction, webhook) {
-    const sheets = getSheets(auth);
-    const roblox = await fetchRobloxData(robloxId);
-    if (!roblox) return "❌ Error: Could not find Roblox User.";
+// --------------------
+// ROLE CONFIGS
+// --------------------
+const ROLE_CONFIG = {
+    jetRecruit: ["1468755195419689073", "1369082109184053476"],
+    flameRecruit: ["1468755302244679926", "1369082109184053476"],
 
-    const now = new Date();
-    const monthsDiff = (now.getFullYear() - roblox.joinDate.getFullYear()) * 12 +
-        (now.getMonth() - roblox.joinDate.getMonth());
+    removePhase2: ["1443766259995901952", "1378869378178879578"],
 
-    const acc_age_ok = monthsDiff >= 7;
-    const badge_count_ok = true;
-    const inventory_ok = true;
-    const progression_ok = true;
+    jetTrooper: ["1443389199645409393", "1387471508816793610", "1369082109435838508"],
+    flameTrooper: ["1369082109435838504", "1443791781811454013", "1443389267652120667"],
 
-    const passedCount = [acc_age_ok, badge_count_ok, inventory_ok, progression_ok].filter(Boolean).length;
-    const passed = passedCount >= 3;
-
-    if (passed) {
-        const placementRes = await sheets.spreadsheets.values.get({
-            spreadsheetId: MAIN_SHEET_ID,
-            range: 'PLACEMENT!B:B'
-        });
-
-        const rows = placementRes.data.values || [];
-        let targetRow = rows.findIndex(r => r[0] === 'N/A') + 1;
-        if (targetRow === 0) targetRow = rows.length + 1;
-
-        await sheets.spreadsheets.values.update({
-            spreadsheetId: MAIN_SHEET_ID,
-            range: `PLACEMENT!B${targetRow}:D${targetRow}`,
-            valueInputOption: 'USER_ENTERED',
-            requestBody: { values: [[roblox.username, '', new Date().toLocaleDateString()]] }
-        });
-
-        const member = await interaction.guild.members.fetch(discordUser.id);
-
-        await member.roles.add(["1399091736856236053", "1443766165536247808", "1378869378178879578"]);
-        await member.roles.remove("1386742728485900348");
-
-        return `✅ BGC Passed. Added to Row ${targetRow}.`;
-    }
-
-    return `❌ BGC Failed (${passedCount}/4).`;
-}
-
-// --- PROMO TEST ---
-async function handlePromotionTest(auth, username, interaction) {
-    const sheets = getSheets(auth);
-
-    const res = await sheets.spreadsheets.values.get({
-        spreadsheetId: DATA_SHEET_ID,
-        range: "'Form Responses 1'!C:C"
-    });
-
-    const rows = res.data.values || [];
-    const rowIndex = rows.findIndex(r => r[0] && r[0].toLowerCase() === username.toLowerCase());
-
-    if (rowIndex === -1) return "❌ Username not found.";
-
-    const scoreRes = await sheets.spreadsheets.values.get({
-        spreadsheetId: DATA_SHEET_ID,
-        range: `'Form Responses 1'!B${rowIndex + 1}`
-    });
-
-    const score = parseInt(scoreRes.data.values?.[0]?.[0]) || 0;
-
-    if (score >= 7) {
-        await interaction.member.roles.add("1443766259995901952");
-        await interaction.member.roles.remove("1443766165536247808");
-        return `✅ Passed with ${score}.`;
-    }
-
-    return `❌ Score ${score}/7 required.`;
-}
-
-// --- ROLE AUTO SYSTEM ---
-async function handleAutoRoles(member, newRank) {
-
-    const roleMap = {
-
-    // --- JET ---
-    "Jet Trooper": { add: ["1369082109435838508"], remove: [] },
-    "Senior Jet Trooper": { add: ["1443792369882239067"], remove: ["1369082109435838508"] },
-    "Veteran Jet Trooper": { add: ["1445500320775016469"], remove: ["1443792369882239067"] },
-
-    "Jet Specialist": { add: ["1445500422147281039"], remove: ["1445500320775016469"] },
-    "Jet Corporal": { add: ["1445500469622345921"], remove: ["1445500422147281039"] },
-
-    // --- FLAME ---
-    "Flame Trooper": { add: ["1443791781811454013"], remove: [] },
-    "Senior Flame Trooper": { add: ["1389915192984604875"], remove: ["1443791781811454013"] },
-    "Veteran Flame Trooper": { add: ["1457209493644640297"], remove: ["1389915192984604875"] },
-
-    "Flame Specialist": { add: ["1457209610875437137"], remove: ["1457209493644640297"] },
-    "Flame Corporal": { add: ["1457209756015136979"], remove: ["1457209610875437137"] }
+    jetRemove: ["1399091736856236053", "1468755195419689073"],
+    flameRemove: ["1468755302244679926", "1399091736856236053"]
 };
 
-    const config = roleMap[newRank];
-    if (!config) return;
+// --------------------
+// SUB-RANK CHAINS
+// --------------------
+const jetRankChain = {
+    "Jet Trooper": ["1369082109435838508", "1443792369882239067"],
+    "Senior Jet Trooper": ["1443792369882239067", "1445500320775016469"],
+    "Veteran Trooper": ["1445500320775016469", "1445500422147281039"],
+    "Specialist": ["1445500422147281039", "1445500469622345921"]
+};
 
-    try {
-        if (config.remove.length) await member.roles.remove(config.remove);
-        if (config.add.length) await member.roles.add(config.add);
-    } catch (err) {
-        console.error("Role error:", err);
-    }
-}
+const flameRankChain = {
+    "Flame Trooper": ["1443791781811454013", "1389915192984604875"],
+    "Senior Flame Trooper": ["1389915192984604875", "1457209493644640297"],
+    "Veteran Trooper": ["1457209493644640297", "1457209610875437137"],
+    "Specialist": ["1457209610875437137", "1457209756015136979"]
+};
 
-// --- RANK ---
-async function transferUser(auth, username, discordUser, newRank, interaction, webhook) {
+// --------------------
+// MAIN TRANSFER FUNCTION
+// --------------------
+async function transferUser(auth, username, discordUser, fromRank, toRank, interaction, webhook) {
     const sheets = getSheets(auth);
-
-    if (!discordUser) return "❌ Invalid Discord user.";
-
     const member = await interaction.guild.members.fetch(discordUser.id);
 
-    // --- RECRUITS ---
-    if (newRank.includes("Recruit")) {
+    // --------------------
+    // RECRUIT ENTRY (PLACEMENT → RECRUITS)
+    // --------------------
+    if (toRank === "Jet Recruit" || toRank === "Flame Recruit") {
+        const isJet = toRank.includes("Jet");
 
-        const isJet = newRank.includes("Jet");
-
-        const pRes = await sheets.spreadsheets.values.get({
+        const placement = await sheets.spreadsheets.values.get({
             spreadsheetId: MAIN_SHEET_ID,
-            range: 'PLACEMENT!B:D'
+            range: "PLACEMENT!B:D"
         });
 
-        const pIdx = (pRes.data.values || []).findIndex(r =>
-            r[0] && r[0].toLowerCase() === username.toLowerCase()
-        );
+        const rows = placement.data.values || [];
+        const index = rows.findIndex(r => r[0]?.toLowerCase() === username.toLowerCase());
 
-        if (pIdx !== -1) {
-            const joinDate = pRes.data.values[pIdx][2];
+        if (index === -1) return "❌ User not found in PLACEMENT.";
 
-            await sheets.spreadsheets.values.update({
-                spreadsheetId: MAIN_SHEET_ID,
-                range: `PLACEMENT!B${pIdx + 1}:G${pIdx + 1}`,
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [["N/A", "PHASE1", "01/01/2026", "FALSE", 0, "FALSE"]] }
-            });
+        const joinDate = rows[index][2];
 
-            await sheets.spreadsheets.values.append({
-                spreadsheetId: MAIN_SHEET_ID,
-                range: 'RECRUITS!B:D', // ✅ FIXED (NO EMOJI)
-                valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [[username, newRank, joinDate]] }
-            });
-        }
+        // CLEAR PLACEMENT
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: `PLACEMENT!B${index + 1}:G${index + 1}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [["N/A", "PHASE1", "01/01/2026", "FALSE", 0, "FALSE"]]
+            }
+        });
 
+        // ADD TO RECRUITS (FIXED NO EMOJI)
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: "RECRUITS!B:D",
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [[username, toRank, joinDate]]
+            }
+        });
+
+        // ROLES
         if (isJet) {
-            await member.roles.add(["1468755195419689073"]);
+            await member.roles.add(ROLE_CONFIG.jetRecruit);
         } else {
-            await member.roles.add(["1468755302244679926"]);
+            await member.roles.add(ROLE_CONFIG.flameRecruit);
         }
 
-        return `✅ Ranked ${username} to ${newRank}.`;
+        await member.roles.remove(ROLE_CONFIG.removePhase2);
+
+        // WELCOME MESSAGE
+        const channel = interaction.guild.channels.cache.get("1468756387562782732");
+        if (channel) {
+            await channel.send({
+                content: `<@${discordUser.id}>
+> 
+> <:FNTC:1443781891349155890> | **WELCOME TO THE FN TROOPER CORPS!**
+> 
+> Please ensure to inspect all the channels that follow:
+> 
+> https://discord.com/channels/1369082109184053469/1468755814134059089
+> https://discord.com/channels/1369082109184053469/1403795268507533393
+> https://discord.com/channels/1369082109184053469/1369082110006267988
+> https://discord.com/channels/1369082109184053469/1443405151149752452
+> https://discord.com/channels/1369082109184053469/1369082110006267989
+> 
+> -# FN Trooper Corps Officer Team`
+            });
+        }
+
+        return `✅ ${username} ranked to ${toRank}`;
     }
 
-    // --- AUTO ROLES ---
-    await handleAutoRoles(member, newRank);
+    // --------------------
+    // RECRUIT → TROOPER
+    // --------------------
+    if (fromRank.includes("Recruit") && toRank.includes("Trooper")) {
+        const recruits = await sheets.spreadsheets.values.get({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: "RECRUITS!B:D"
+        });
 
-    return `✅ Ranked ${username} to ${newRank}.`;
+        const rows = recruits.data.values || [];
+        const index = rows.findIndex(r => r[0]?.toLowerCase() === username.toLowerCase());
+
+        if (index === -1) return "❌ User not found in RECRUITS.";
+
+        const joinDate = rows[index][2];
+        const isJet = fromRank.includes("Jet");
+
+        const targetSheet = isJet ? "JETPACK COMPANY" : "FLAMETROOPER COMPANY";
+
+        // ADD TO COMPANY
+        await sheets.spreadsheets.values.append({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: `${targetSheet}!B:I`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [["N/A", "", "", joinDate, "", "", "", "TRUE"]]
+            }
+        });
+
+        // RESET RECRUIT ROW
+        await sheets.spreadsheets.values.update({
+            spreadsheetId: MAIN_SHEET_ID,
+            range: `RECRUITS!B${index + 1}:H${index + 1}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+                values: [["N/A", "N/A", "01/01/2026", 0, "FALSE", 0, "FALSE"]]
+            }
+        });
+
+        // ROLES
+        if (isJet) {
+            await member.roles.add(ROLE_CONFIG.jetTrooper);
+            await member.roles.remove(ROLE_CONFIG.jetRemove);
+        } else {
+            await member.roles.add(ROLE_CONFIG.flameTrooper);
+            await member.roles.remove(ROLE_CONFIG.flameRemove);
+        }
+
+        return `✅ ${username} promoted to ${toRank}`;
+    }
+
+    // --------------------
+    // SUB-RANK PROGRESSION
+    // --------------------
+    if (jetRankChain[fromRank]) {
+        const [removeRole, addRole] = jetRankChain[fromRank];
+        await member.roles.remove(removeRole);
+        await member.roles.add(addRole);
+        return `✅ ${username} promoted (Jet chain)`;
+    }
+
+    if (flameRankChain[fromRank]) {
+        const [removeRole, addRole] = flameRankChain[fromRank];
+        await member.roles.remove(removeRole);
+        await member.roles.add(addRole);
+        return `✅ ${username} promoted (Flame chain)`;
+    }
+
+    return "❌ Invalid ranking path.";
 }
 
-module.exports = { handleBGC, handlePromotionTest, transferUser };
+module.exports = { transferUser };

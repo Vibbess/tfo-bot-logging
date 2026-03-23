@@ -1,72 +1,143 @@
+/*
+    FN Trooper Corps Configuration
+    Clean version matching NEW system
+*/
+
 module.exports = {
-    // --- DISCORD CONNECTION ---
-    TOKEN: process.env.DISCORD_TOKEN,
-    GUILD_ID: "1369082109184053469",
-    OWNER_ID: "1097605097502015539",
-    WEBHOOK_URL: process.env.WEBHOOK_URL,
 
-    // --- GOOGLE SHEETS ---
-    SHEET_ID: "1S-MdjLntP9KVZd8vpyR-n_IM6ZxlMsBF7DRONTBx1OM",
-    
-    // --- CHANNELS ---
-    WELCOME_CHANNEL_ID: "1468756387562782732",
-    LOG_IMAGE_URL: "https://cdn.discordapp.com/attachments/1369082110291349585/1468765416036896808/image.png",
+    /* ================= SHEETS ================= */
 
-    // --- CORE ROLES ---
-    AUTH_ROLE_ID: "1369082109184053474",      // Authorized to use bot
-    PROMO_REQ_ROLE_ID: "1443766165536247808",  // Allowed to request test
-    PHASE2_ROLE_ID: "1443766259995901952",     // Set after passing score check
+    SHEETS: {
+        PLACEMENT: "PLACEMENT",
+        RECRUITS: "RECRUITS",
+        JET: "JETPACK COMPANY",
+        FLAME: "FLAMETROOPER COMPANY",
+        STAFF: "DIVISIONAL STAFF",
+        HIGH: "HIGH COMMAND"
+    },
 
-    // --- RANK MAPPINGS ---
-    RANKS: {
-        // Jet Company
-        JET_RECRUIT: {
-            add: ["1468755195419689073", "1369082109184053476"],
-            remove: ["1443766259995901952", "1378869378178879578"]
-        },
-        JET_TROOPER: {
-            add: ["1443389199645409393", "1387471508816793610", "1369082109435838508"],
-            remove: ["1399091736856236053", "1468755195419689073"]
-        },
-        SENIOR_JET: {
-            add: ["1443792369882239067"],
-            remove: ["1369082109435838508"]
-        },
-        VETERAN_JET: {
-            add: ["1445500320775016469"],
-            remove: ["1443792369882239067"]
-        },
-        MASTER_JET: {
-            add: ["1451525281410973706"],
-            remove: ["1445500320775016469"]
+    /* ================= COLUMN MAPS ================= */
+    /* All indexes are ZERO-BASED */
+
+    COLUMNS: {
+
+        PLACEMENT: {
+            USERNAME: 1, // B
+            PHASE: 2,    // C
+            DATE: 3,     // D
+            ACTIVE: 4,   // E
+            SCORE: 5,    // F
+            FLAG: 6      // G
         },
 
-        // Flame Company
-        FLAME_RECRUIT: {
-            add: ["1468755302244679926", "1369082109184053476"],
-            remove: ["1443766259995901952", "1378869378178879578"]
-        },
-        FLAME_TROOPER: {
-            add: ["1369082109435838504", "1443791781811454013", "1443389267652120667"],
-            remove: ["1468755302244679926", "1399091736856236053"]
-        },
-        SENIOR_FLAME: {
-            add: ["1389915192984604875"],
-            remove: ["1443791781811454013"]
-        },
-        VETERAN_FLAME: {
-            add: ["1457209493644640297"],
-            remove: ["1389915192984604875"]
-        },
-        MASTER_FLAME: {
-            add: ["1457209569733513307"],
-            remove: ["1457209493644640297"]
+        RECRUITS: {
+            USERNAME: 1, // B
+            RANK: 2,     // C
+            DATE: 3,     // D
+            PATROLS: 4,  // E
+            PT: 5,       // F
+            EVENTS: 6,   // G
+            FLAG: 7      // H
         },
 
-        // BGC Specific
-        BGC_PASS: {
-            add: ["1399091736856236053", "1443766165536247808", "1378869378178879578"],
-            remove: ["1386742728485900348"]
+        JET: {
+            USERNAME: 1, // B
+            RANK: 2,     // C
+            EVENTS: 4,   // E
+            WEEKLY: 5,   // F
+            TIME: 6,     // G
+            NOTE: 8      // I
+        },
+
+        FLAME: {
+            USERNAME: 1,
+            RANK: 2,
+            EVENTS: 4,
+            WEEKLY: 5,
+            TIME: 6,
+            NOTE: 8
+        },
+
+        STAFF: {
+            USERNAME: 1,
+            EVENTS: 5, // F
+            HOSTS: 6,  // G
+            EXTRA: 7,  // H
+            TRYOUTS: 10 // K
+        },
+
+        HIGH: {
+            USERNAME: 1,
+            HOSTS: 6, // G
+            EVENTS: 7 // H
         }
+    },
+
+    /* ================= ROLE IDS ================= */
+
+    ROLES: {
+
+        /* BASE */
+        AUTHORIZED: "1369082109184053474",
+        REQUESTER: "1443766165536247808",
+
+        /* PHASE */
+        PHASE_TWO: "1443766259995901952",
+        PHASE_ONE_REMOVE: "1443766165536247808",
+
+        /* RECRUITS */
+        JET_RECRUIT: "1468755195419689073",
+        FLAME_RECRUIT: "1468755302244679926",
+        RECRUIT_BASE: "1369082109184053476",
+
+        /* TROOPERS */
+        JET_TROOPER: "1369082109435838508",
+        FLAME_TROOPER: "1443791781811454013",
+
+        /* JET PROGRESSION */
+        SENIOR_JET: "1443792369882239067",
+        VETERAN_JET: "1445500320775016469",
+        SPECIALIST_JET: "1445500422147281039",
+        CORPORAL_JET: "1445500469622345921",
+
+        /* FLAME PROGRESSION */
+        SENIOR_FLAME: "1389915192984604875",
+        VETERAN_FLAME: "1457209493644640297",
+        SPECIALIST_FLAME: "1457209610875437137",
+        CORPORAL_FLAME: "1457209756015136979",
+
+        /* OTHER */
+        REMOVE_ON_JOIN: "1386742728485900348"
+    },
+
+    /* ================= RANK FLOW ================= */
+
+    RANK_FLOW: {
+
+        /* RECRUIT → TROOPER */
+        "Jet Recruit": "Jet Trooper",
+        "Flame Recruit": "Flame Trooper",
+
+        /* JET PATH */
+        "Jet Trooper": "Senior Jet Trooper",
+        "Senior Jet Trooper": "Veteran Trooper",
+        "Veteran Trooper": "Specialist",
+        "Specialist": "Corporal",
+
+        /* FLAME PATH */
+        "Flame Trooper": "Senior Flame Trooper",
+        "Senior Flame Trooper": "Veteran Trooper",
+        "Veteran Trooper": "Specialist",
+        "Specialist": "Corporal"
+    },
+
+    /* ================= DEFAULT VALUES ================= */
+
+    DEFAULTS: {
+        RESET_DATE: "01/01/2026",
+        EMPTY: "N/A",
+        FALSE: "FALSE",
+        TRUE: "TRUE"
     }
+
 };
