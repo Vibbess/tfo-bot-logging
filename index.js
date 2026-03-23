@@ -18,22 +18,16 @@ const client = new Client({
     ] 
 });
 
-// --- Base64 Google Auth Fix ---
 const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
 const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
 
 let gKey;
-try {
-    // Check if it's Base64 (doesn't contain the BEGIN header)
-    if (!gRawKey.includes('-----BEGIN')) {
-        gKey = Buffer.from(gRawKey, 'base64').toString('utf-8');
-    } else {
-        // Fallback for standard format
-        gKey = gRawKey.replace(/\\n/g, '\n').replace(/"/g, '').trim();
-    }
-} catch (e) {
-    console.error("Failed to parse GOOGLE_PRIVATE_KEY");
-    gKey = gRawKey;
+if (gRawKey.includes('-----BEGIN')) {
+    // If it's the raw key, clean the backslashes
+    gKey = gRawKey.replace(/\\n/g, '\n');
+} else {
+    // If it's the Base64 string from Railway, decode it
+    gKey = Buffer.from(gRawKey, 'base64').toString('utf8');
 }
 
 const serviceAccountAuth = new JWT({
