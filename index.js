@@ -18,18 +18,25 @@ const client = new Client({
     ] 
 });
 
-// --- Secure Google Auth ---
+// --- Secure Google Auth (The "Nuclear" Fix) ---
 const gEmail = process.env.GOOGLE_CLIENT_EMAIL || creds.client_email;
 const gRawKey = process.env.GOOGLE_PRIVATE_KEY || creds.private_key;
 
-// This logic fixes the "Invalid JWT Signature" by:
-// 1. Removing any accidental surrounding quotes
-// 2. Converting literal \n text into real newlines
-// 3. Ensuring no extra spaces at start/end
-const gKey = gRawKey
-    .replace(/^"(.*)"$/, '$1') // Remove surrounding double quotes if they exist
-    .replace(/\\n/g, '\n')      // Convert literal \n to real newlines
-    .trim();                    // Remove accidental leading/trailing spaces
+let gKey = gRawKey
+    .replace(/\\n/g, '\n') // Convert literal \n to real newlines
+    .replace(/"/g, '')     // Remove any accidental quotes
+    .trim();
+
+// If the key was pasted as one long line without newlines, 
+// we have to rebuild the block so the OpenSSL decoder recognizes it.
+if (!gKey.includes('\n') && gKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    const header = '-----BEGIN PRIVATE KEY-----';
+    const footer = '-----END PRIVATE KEY-----';
+    let body = gKey.replace(header, '').replace(footer, '').replace(/\s/g, '');
+    // This regex slices the long string into 64-character lines (Standard RSA format)
+    body = body.match(/.{1,64}/g).join('\n');
+    gKey = `${header}\n${body}\n${footer}\n`;
+}
 
 const serviceAccountAuth = new JWT({
     email: gEmail,
