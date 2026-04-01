@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, WebhookClient, MessageFlags } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, WebhookClient, MessageFlags, Events } = require('discord.js');
 const { google } = require('googleapis');
 const fs = require('fs');
 
@@ -54,6 +54,20 @@ async function getUserSheets(userId) {
     return auth;
 }
 
+// Rank dropdown choices for Auto-fill
+const rankChoices = [
+    { name: 'Placement Phase Two', value: 'Placement Phase Two' },
+    { name: 'Jet Recruit', value: 'Jet Recruit' },
+    { name: 'Flame Recruit', value: 'Flame Recruit' },
+    { name: 'Jet Trooper', value: 'Jet Trooper' },
+    { name: 'Flame Trooper', value: 'Flame Trooper' },
+    { name: 'Senior Jet Trooper', value: 'Senior Jet Trooper' },
+    { name: 'Senior Flame Trooper', value: 'Senior Flame Trooper' },
+    { name: 'Veteran Trooper', value: 'Veteran Trooper' },
+    { name: 'Specialist', value: 'Specialist' },
+    { name: 'Corporal', value: 'Corporal' }
+];
+
 const commands = [
     new SlashCommandBuilder().setName('authorize').setDescription('Authorize a user for a command')
         .addUserOption(o => o.setName('user').setDescription('The user to authorize').setRequired(true))
@@ -75,8 +89,8 @@ const commands = [
     new SlashCommandBuilder().setName('rank').setDescription('Promote or transfer a user')
         .addStringOption(o => o.setName('robloxusername').setRequired(true).setDescription('Roblox Username'))
         .addUserOption(o => o.setName('discorduser').setRequired(true).setDescription('Discord User'))
-        .addStringOption(o => o.setName('current_rank').setRequired(true).setDescription('From Rank'))
-        .addStringOption(o => o.setName('new_rank').setRequired(true).setDescription('To Rank')),
+        .addStringOption(o => o.setName('current_rank').setRequired(true).setDescription('From Rank').addChoices(...rankChoices))
+        .addStringOption(o => o.setName('new_rank').setRequired(true).setDescription('To Rank').addChoices(...rankChoices)),
 
     new SlashCommandBuilder().setName('eventlog').setDescription('Log an event')
         .addStringOption(o => o.setName('event_type').setRequired(true).setDescription('Type of event'))
@@ -154,9 +168,10 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-client.once('ready', async (c) => {
+client.once(Events.ClientReady, async (c) => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     await rest.put(Routes.applicationGuildCommands(c.user.id, ALLOWED_GUILD_ID), { body: commands });
     console.log(`✅ Logged in as ${c.user.tag}`);
 });
+
 client.login(TOKEN);
