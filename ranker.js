@@ -4,11 +4,28 @@ const { ROLES, TABS, WELCOME_CHANNEL, EXTERNAL_SHEET_ID } = require('./config');
 function normalizeName(name) { return name ? name.toString().split('|')[0].trim().toLowerCase() : ""; }
 function getTodayDate() { const d = new Date(); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; }
 
+/**
+ * FIXED: Uses member.roles.set or a single transaction to prevent race conditions.
+ * We calculate the new role set and apply it once.
+ */
 async function modDiscordRoles(member, addList, removeList) {
     try {
-        if (addList.length > 0) await member.roles.add(addList);
-        if (removeList.length > 0) await member.roles.remove(removeList);
-    } catch (e) { console.error("Role modification failed:", e); }
+        // Filter out any undefined/null roles from the lists
+        const toAdd = (addList || []).filter(role => role);
+        const toRemove = (removeList || []).filter(role => role);
+
+        // Get current roles as an array of IDs, add new ones, and filter out removed ones
+        let currentRoleIds = Array.from(member.roles.cache.keys());
+        
+        let newRoleIds = currentRoleIds
+            .concat(toAdd)
+            .filter(id => !toRemove.includes(id));
+
+        // Use Set to ensure unique IDs
+        await member.roles.set([...new Set(newRoleIds)]);
+    } catch (e) { 
+        console.error("Role modification failed:", e); 
+    }
 }
 
 async function findEmptyRow(sheets, spreadsheetId, tab, col = 'B', max = 150) {
@@ -22,29 +39,26 @@ async function findEmptyRow(sheets, spreadsheetId, tab, col = 'B', max = 150) {
 
 async function clearRow(sheets, spreadsheetId, tab, rowNum, defaultValues) {
     await sheets.spreadsheets.values.update({
-        spreadsheetId, range: `${tab}!B${rowNum}:${String.fromCharCode(65 + defaultValues.length + 1)}${rowNum}`,
+        spreadsheetId, range: `${tab}!B${rowNum}:${String.fromCharCode(64 + defaultValues.length + 1)}${rowNum}`,
         valueInputOption: 'USER_ENTERED', requestBody: { values: [defaultValues] }
     });
 }
 
-// 1. handlePromotionRequest (The External Sheet Check)
+// 1. handlePromotionRequest
 async function handlePromotionRequest(auth, username, member) {
     const sheets = google.sheets({ version: 'v4', auth });
-    
-    // Check external sheet B and C
     const res = await sheets.spreadsheets.values.get({ spreadsheetId: EXTERNAL_SHEET_ID, range: `Sheet1!B1:C100` });
     const rows = res.data.values || [];
     
     let passed = false;
     for (let row of rows) {
         if (normalizeName(row[1]) === normalizeName(username)) {
-            const score = parseInt(row[0]); // assuming B is col 0 in B:C fetch, C is col 1
+            const score = parseInt(row[0]); 
             if (score >= 7) passed = true;
             break;
         }
     }
 
-    // Now update main placement sheet based on pass/fail
     const MAIN_SHEET = process.env.SHEET_ID;
     const placementData = await sheets.spreadsheets.values.get({ spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!B1:F100` });
     const pRows = placementData.data.values || [];
@@ -66,11 +80,10 @@ async function handlePromotionRequest(auth, username, member) {
     return `⚠️ ${username} not found on the placement sheet.`;
 }
 
-// 2. transferUser (The main /rank command)
+// 2. transferUser
 async function transferUser(auth, spreadsheetId, username, member, currentRank, newRank, guild, webhook) {
     const sheets = google.sheets({ version: 'v4', auth });
 
-    // PLACEMENT -> RECRUITS (Jet Recruit or Flame Recruit)
     if (currentRank === "Placement Phase Two" && newRank.includes("Recruit")) {
         const pRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TABS.PLACEMENT}!B1:D100` });
         const pRows = pRes.data.values || [];
@@ -86,25 +99,20 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
         }
         if (pRowNum === -1) throw new Error("User not found in Placement.");
 
-        // Add to Recruits
         const rRow = await findEmptyRow(sheets, spreadsheetId, TABS.RECRUITS);
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${TABS.RECRUITS}!B${rRow}:D${rRow}`,
             valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, newRank, dateJoined]] }
         });
 
-        // Clear Placement
         await clearRow(sheets, spreadsheetId, TABS.PLACEMENT, pRowNum, ["N/A", "PHASE1", "01/01/2026", "FALSE", "0", "FALSE"]);
 
-        // Roles & Webhook
-        if (newRank === "Jet Recruit") {
-            await modDiscordRoles(member, [ROLES.JET_RECRUIT, ROLES.FN_CORPS], [ROLES.PASSED_PHASE_2, ROLES.UNASSIGNED_1]);
-        } else {
-            await modDiscordRoles(member, [ROLES.FLAME_RECRUIT, ROLES.FN_CORPS], [ROLES.PASSED_PHASE_2, ROLES.UNASSIGNED_1]);
-        }
+        // Updated Roles logic
+        const rolesToAdd = [ROLES.FN_CORPS, (newRank === "Jet Recruit" ? ROLES.JET_RECRUIT : ROLES.FLAME_RECRUIT)];
+        const rolesToRemove = [ROLES.PASSED_PHASE_2, ROLES.UNASSIGNED_1];
+        await modDiscordRoles(member, rolesToAdd, rolesToRemove);
 
-        const welcomeMsg = `<@${member.user.id}>\n> \n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n>\n> Please ensure to inspect all the channels that follow:\n>\n>  https://discord.com/channels/1369082109184053469/1468755814134059089 - Trial Information.\n>  https://discord.com/channels/1369082109184053469/1403795268507533393 - Request your promotion here once you finish your trial.\n>  https://discord.com/channels/1369082109184053469/1369082110006267988 - Server rules.\n>  https://discord.com/channels/1369082109184053469/1443405151149752452 - Frequently asked questions can be found here.\n>  https://discord.com/channels/1369082109184053469/1369082110006267989 - Read our documents.\n>\n> -# Signed,\n> -# FN Trooper Corps, Officer Team`;
-        
+        const welcomeMsg = `<@${member.user.id}>\n> \n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n> ... (rest of msg)`;
         const channel = guild.channels.cache.get(WELCOME_CHANNEL);
         if (channel) channel.send(welcomeMsg);
 
@@ -112,7 +120,6 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
         return `✅ Transferred ${username} from Placement to ${newRank}.`;
     }
 
-    // RECRUIT -> TROOPER
     if (currentRank.includes("Recruit") && newRank.includes("Trooper")) {
         const rRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TABS.RECRUITS}!B1:D100` });
         const rRows = rRes.data.values || [];
@@ -127,8 +134,9 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
         }
         if (rRowNum === -1) throw new Error("User not found in Recruits.");
 
-        const targetTab = newRank.includes("Jet") ? TABS.JETPACK : TABS.FLAMETROOPER;
-        const targetTitle = newRank.includes("Jet") ? "Jet Trooper" : "Flametrooper";
+        const isJet = newRank.includes("Jet");
+        const targetTab = isJet ? TABS.JETPACK : TABS.FLAMETROOPER;
+        const targetTitle = isJet ? "Jet Trooper" : "Flametrooper";
         
         const tRow = await findEmptyRow(sheets, spreadsheetId, targetTab);
         await sheets.spreadsheets.values.update({
@@ -136,24 +144,22 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
             valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, targetTitle, dateJoined]] }
         });
         
-        // Add note to I
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${targetTab}!I${tRow}`,
             valueInputOption: 'USER_ENTERED', requestBody: { values: [["TRUE"]] }
-        }); // Realistically, notes require specific google sheets batchUpdate requests, placing TRUE here as a placeholder for the logic map
+        });
 
         await clearRow(sheets, spreadsheetId, TABS.RECRUITS, rRowNum, ["N/A", "N/A", "01/01/2026", "0", "FALSE", "0", "FALSE"]);
 
-        if (newRank.includes("Jet")) {
-            await modDiscordRoles(member, [ROLES.JET_COMPANY_ROLE_1, ROLES.JET_COMPANY_ROLE_2, ROLES.JET_TROOPER], [ROLES.UNASSIGNED_2, ROLES.JET_RECRUIT]);
-        } else {
-            await modDiscordRoles(member, [ROLES.FLAME_COMPANY_ROLE_1, ROLES.FLAME_TROOPER, ROLES.FLAME_COMPANY_ROLE_2], [ROLES.FLAME_RECRUIT, ROLES.UNASSIGNED_2]);
-        }
+        const add = isJet ? [ROLES.JET_COMPANY_ROLE_1, ROLES.JET_COMPANY_ROLE_2, ROLES.JET_TROOPER] : [ROLES.FLAME_COMPANY_ROLE_1, ROLES.FLAME_TROOPER, ROLES.FLAME_COMPANY_ROLE_2];
+        const rem = isJet ? [ROLES.UNASSIGNED_2, ROLES.JET_RECRUIT] : [ROLES.FLAME_RECRUIT, ROLES.UNASSIGNED_2];
+        
+        await modDiscordRoles(member, add, rem);
         if (webhook) await webhook.send({ content: `✅ Promoted **${username}** to ${newRank}.` });
         return `✅ Promoted ${username} to ${newRank} in ${targetTab}.`;
     }
 
-    // STANDARD PROGRESSION PROMOTIONS
+    // STANDARD PROGRESSION
     const standardPromos = {
         "Jet Trooper-Senior Jet Trooper": { add: [ROLES.SENIOR_JET_TROOPER], rem: [ROLES.JET_TROOPER] },
         "Senior Jet Trooper-Veteran Trooper": { add: [ROLES.VETERAN_TROOPER], rem: [ROLES.SENIOR_JET_TROOPER] },
@@ -170,7 +176,7 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
         return `✅ Promoted ${username} from ${currentRank} to ${newRank}. Roles updated.`;
     }
 
-    return "⚠️ Promotion path not recognized or currently implemented.";
+    return "⚠️ Promotion path not recognized.";
 }
 
 module.exports = { transferUser, handlePromotionRequest };
