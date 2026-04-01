@@ -1,103 +1,91 @@
 const { google } = require('googleapis');
 const { ROLES, TABS, WELCOME_CHANNEL, EXTERNAL_SHEET_ID } = require('./config');
 
-function normalizeName(name) { return name ? name.toString().split('|')[0].trim().toLowerCase() : ""; }
+function normalizeName(name) { return name ? name.toString().trim().toLowerCase() : ""; }
 function getTodayDate() { const d = new Date(); return `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}`; }
 
-/**
- * FIXED: Uses member.roles.set or a single transaction to prevent race conditions.
- * We calculate the new role set and apply it once.
- */
 async function modDiscordRoles(member, addList, removeList) {
     try {
-        // Filter out any undefined/null roles from the lists
-        const toAdd = (addList || []).filter(role => role);
-        const toRemove = (removeList || []).filter(role => role);
-
-        // Get current roles as an array of IDs, add new ones, and filter out removed ones
         let currentRoleIds = Array.from(member.roles.cache.keys());
-        
         let newRoleIds = currentRoleIds
-            .concat(toAdd)
-            .filter(id => !toRemove.includes(id));
-
-        // Use Set to ensure unique IDs
+            .concat(addList.filter(role => role))
+            .filter(id => !removeList.includes(id));
         await member.roles.set([...new Set(newRoleIds)]);
-    } catch (e) { 
-        console.error("Role modification failed:", e); 
-    }
+    } catch (e) { console.error("Role Error:", e); }
 }
 
-async function findEmptyRow(sheets, spreadsheetId, tab, col = 'B', max = 150) {
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tab}!${col}1:${col}${max}` });
+async function findEmptyRow(sheets, spreadsheetId, tab, col = 'B') {
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${tab}!${col}1:${col}200` });
     const rows = res.data.values || [];
-    for (let i = 0; i < max; i++) {
+    for (let i = 0; i < 200; i++) {
         if (!rows[i] || !rows[i][0] || rows[i][0] === "N/A") return i + 1;
     }
-    return max + 1;
+    return rows.length + 1;
 }
 
-async function clearRow(sheets, spreadsheetId, tab, rowNum, defaultValues) {
-    await sheets.spreadsheets.values.update({
-        spreadsheetId, range: `${tab}!B${rowNum}:${String.fromCharCode(64 + defaultValues.length + 1)}${rowNum}`,
-        valueInputOption: 'USER_ENTERED', requestBody: { values: [defaultValues] }
-    });
-}
-
-// 1. handlePromotionRequest
+// 1. /request promotion test
 async function handlePromotionRequest(auth, username, member) {
     const sheets = google.sheets({ version: 'v4', auth });
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: EXTERNAL_SHEET_ID, range: `Sheet1!B1:C100` });
+    
+    // Check External Sheet (Score in B, Username in C)
+    const res = await sheets.spreadsheets.values.get({ 
+        spreadsheetId: EXTERNAL_SHEET_ID, 
+        range: `Sheet1!B1:C100` 
+    });
     const rows = res.data.values || [];
     
     let passed = false;
     for (let row of rows) {
         if (normalizeName(row[1]) === normalizeName(username)) {
-            const score = parseInt(row[0]); 
-            if (score >= 7) passed = true;
+            if (parseInt(row[0]) >= 7) passed = true;
             break;
         }
     }
 
     const MAIN_SHEET = process.env.SHEET_ID;
-    const placementData = await sheets.spreadsheets.values.get({ spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!B1:F100` });
-    const pRows = placementData.data.values || [];
+    const pRes = await sheets.spreadsheets.values.get({ spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!B1:F100` });
+    const pRows = pRes.data.values || [];
     
     for (let i = 0; i < pRows.length; i++) {
         if (normalizeName(pRows[i][0]) === normalizeName(username)) {
             const rowNum = i + 1;
             if (passed) {
-                await sheets.spreadsheets.values.update({ spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!C${rowNum}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [["PHASE2"]] }});
+                await sheets.spreadsheets.values.update({ 
+                    spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!C${rowNum}`, 
+                    valueInputOption: 'USER_ENTERED', requestBody: { values: [["PHASE2"]] }
+                });
                 await modDiscordRoles(member, [ROLES.PASSED_PHASE_2], [ROLES.REQ_PROMO_ROLE]);
-                return `✅ **${username}** scored 7+! Updated to PHASE2.`;
+                return `✅ **${username}** passed with 7+! Roles updated to Phase 2.`;
             } else {
                 const currentF = parseInt(pRows[i][4] || 0);
-                await sheets.spreadsheets.values.update({ spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!F${rowNum}`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[currentF + 1]] }});
-                return `❌ **${username}** did not pass (<7). Added +1 to F.`;
+                await sheets.spreadsheets.values.update({ 
+                    spreadsheetId: MAIN_SHEET, range: `${TABS.PLACEMENT}!F${rowNum}`, 
+                    valueInputOption: 'USER_ENTERED', requestBody: { values: [[currentF + 1]] }
+                });
+                return `❌ **${username}** failed (<7). Added +1 failure to sheet.`;
             }
         }
     }
-    return `⚠️ ${username} not found on the placement sheet.`;
+    return `⚠️ User ${username} not found on Placement sheet.`;
 }
 
-// 2. transferUser
-async function transferUser(auth, spreadsheetId, username, member, currentRank, newRank, guild, webhook) {
+// 2. /rank command
+async function transferUser(auth, spreadsheetId, username, member, currentRank, newRank, guild) {
     const sheets = google.sheets({ version: 'v4', auth });
 
+    // PLACEMENT -> RECRUITS
     if (currentRank === "Placement Phase Two" && newRank.includes("Recruit")) {
         const pRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TABS.PLACEMENT}!B1:D100` });
         const pRows = pRes.data.values || [];
-        let dateJoined = getTodayDate();
+        let dateJoined = "01/01/2026";
         let pRowNum = -1;
 
         for (let i=0; i < pRows.length; i++) {
             if (normalizeName(pRows[i][0]) === normalizeName(username)) {
                 dateJoined = pRows[i][2];
-                pRowNum = i + 1;
-                break;
+                pRowNum = i + 1; break;
             }
         }
-        if (pRowNum === -1) throw new Error("User not found in Placement.");
 
         const rRow = await findEmptyRow(sheets, spreadsheetId, TABS.RECRUITS);
         await sheets.spreadsheets.values.update({
@@ -105,25 +93,35 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
             valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, newRank, dateJoined]] }
         });
 
-        await clearRow(sheets, spreadsheetId, TABS.PLACEMENT, pRowNum, ["N/A", "PHASE1", "01/01/2026", "FALSE", "0", "FALSE"]);
+        // Reset Placement Row
+        await sheets.spreadsheets.values.update({
+            spreadsheetId, range: `${TABS.PLACEMENT}!B${pRowNum}:G${pRowNum}`,
+            valueInputOption: 'USER_ENTERED', requestBody: { values: [["N/A", "PHASE1", "01/01/2026", "FALSE", "0", "FALSE"]] }
+        });
 
-        // Updated Roles logic
-        const rolesToAdd = [ROLES.FN_CORPS, (newRank === "Jet Recruit" ? ROLES.JET_RECRUIT : ROLES.FLAME_RECRUIT)];
-        const rolesToRemove = [ROLES.PASSED_PHASE_2, ROLES.UNASSIGNED_1];
-        await modDiscordRoles(member, rolesToAdd, rolesToRemove);
+        // Roles
+        const isJet = newRank === "Jet Recruit";
+        const add = isJet ? [ROLES.JET_RECRUIT, ROLES.FN_CORPS] : [ROLES.FLAME_RECRUIT, ROLES.FN_CORPS];
+        const rem = [ROLES.PASSED_PHASE_2, ROLES.UNASSIGNED_1];
+        await modDiscordRoles(member, add, rem);
 
-        const welcomeMsg = `<@${member.user.id}>\n> \n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n> ... (rest of msg)`;
+        // Welcome Message
+        const welcomeMsg = `<@${member.user.id}>\n> \n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n>\n> https://discord.com/channels/1369082109184053469/1468755814134059089 - Trial Information...\n> -# FN Trooper Corps, Officer Team`;
         const channel = guild.channels.cache.get(WELCOME_CHANNEL);
         if (channel) channel.send(welcomeMsg);
 
-        if (webhook) await webhook.send({ content: `✅ Promoted **${username}** to ${newRank}.` });
-        return `✅ Transferred ${username} from Placement to ${newRank}.`;
+        return `✅ Transferred ${username} to ${newRank}.`;
     }
 
+    // RECRUIT -> TROOPER
     if (currentRank.includes("Recruit") && newRank.includes("Trooper")) {
-        const rRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${TABS.RECRUITS}!B1:D100` });
+        const isJet = newRank.includes("Jet");
+        const recruitTab = TABS.RECRUITS;
+        const targetTab = isJet ? TABS.JETPACK : TABS.FLAMETROOPER;
+        
+        const rRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: `${recruitTab}!B1:D100` });
         const rRows = rRes.data.values || [];
-        let dateJoined = getTodayDate();
+        let dateJoined = "01/01/2026";
         let rRowNum = -1;
 
         for (let i=0; i < rRows.length; i++) {
@@ -132,51 +130,49 @@ async function transferUser(auth, spreadsheetId, username, member, currentRank, 
                 rRowNum = i + 1; break;
             }
         }
-        if (rRowNum === -1) throw new Error("User not found in Recruits.");
 
-        const isJet = newRank.includes("Jet");
-        const targetTab = isJet ? TABS.JETPACK : TABS.FLAMETROOPER;
-        const targetTitle = isJet ? "Jet Trooper" : "Flametrooper";
-        
         const tRow = await findEmptyRow(sheets, spreadsheetId, targetTab);
+        // Set Data & Note in I
         await sheets.spreadsheets.values.update({
-            spreadsheetId, range: `${targetTab}!B${tRow}:D${tRow}`,
-            valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, targetTitle, dateJoined]] }
+            spreadsheetId, range: `${targetTab}!B${tRow}:I${tRow}`,
+            valueInputOption: 'USER_ENTERED', requestBody: { values: [[username, newRank, "N/A", dateJoined, "N/A", "N/A", "N/A", "N/A", "TRUE"]] }
         });
-        
-        await sheets.spreadsheets.values.update({
-            spreadsheetId, range: `${targetTab}!I${tRow}`,
-            valueInputOption: 'USER_ENTERED', requestBody: { values: [["TRUE"]] }
-        });
+        // Note: You may need a separate request for a physical "Cell Note", but setting column I to TRUE as requested.
 
-        await clearRow(sheets, spreadsheetId, TABS.RECRUITS, rRowNum, ["N/A", "N/A", "01/01/2026", "0", "FALSE", "0", "FALSE"]);
+        // Clear Recruit Row
+        await sheets.spreadsheets.values.update({
+            spreadsheetId, range: `${recruitTab}!B${rRowNum}:H${rRowNum}`,
+            valueInputOption: 'USER_ENTERED', requestBody: { values: [["N/A", "N/A", "01/01/2026", "0", "FALSE", "0", "FALSE"]] }
+        });
 
         const add = isJet ? [ROLES.JET_COMPANY_ROLE_1, ROLES.JET_COMPANY_ROLE_2, ROLES.JET_TROOPER] : [ROLES.FLAME_COMPANY_ROLE_1, ROLES.FLAME_TROOPER, ROLES.FLAME_COMPANY_ROLE_2];
-        const rem = isJet ? [ROLES.UNASSIGNED_2, ROLES.JET_RECRUIT] : [ROLES.FLAME_RECRUIT, ROLES.UNASSIGNED_2];
-        
+        const rem = isJet ? [ROLES.UNASSIGNED_2, ROLES.JET_RECRUIT] : [ROLES.UNASSIGNED_2, ROLES.FLAME_RECRUIT];
         await modDiscordRoles(member, add, rem);
-        if (webhook) await webhook.send({ content: `✅ Promoted **${username}** to ${newRank}.` });
-        return `✅ Promoted ${username} to ${newRank} in ${targetTab}.`;
+
+        return `✅ ${username} is now a ${newRank}.`;
     }
 
     // STANDARD PROGRESSION
-    const standardPromos = {
+    const progression = {
+        // Jet
         "Jet Trooper-Senior Jet Trooper": { add: [ROLES.SENIOR_JET_TROOPER], rem: [ROLES.JET_TROOPER] },
-        "Senior Jet Trooper-Veteran Trooper": { add: [ROLES.VETERAN_TROOPER], rem: [ROLES.SENIOR_JET_TROOPER] },
+        "Senior Jet Trooper-Veteran Trooper": { add: [ROLES.JET_VETERAN], rem: [ROLES.SENIOR_JET_TROOPER] },
+        "Veteran Trooper-Jet Specialist": { add: [ROLES.JET_SPECIALIST], rem: [ROLES.JET_VETERAN] },
+        "Jet Specialist-Jet Corporal": { add: [ROLES.JET_CORPORAL], rem: [ROLES.JET_SPECIALIST] },
+        // Flame
         "Flame Trooper-Senior Flame Trooper": { add: [ROLES.SENIOR_FLAME_TROOPER], rem: [ROLES.FLAME_TROOPER] },
-        "Senior Flame Trooper-Veteran Trooper": { add: [ROLES.VETERAN_TROOPER], rem: [ROLES.SENIOR_FLAME_TROOPER] },
-        "Veteran Trooper-Specialist": { add: [ROLES.SPECIALIST], rem: [ROLES.VETERAN_TROOPER] },
-        "Specialist-Corporal": { add: [ROLES.CORPORAL], rem: [ROLES.SPECIALIST] }
+        "Senior Flame Trooper-Veteran Trooper": { add: [ROLES.FLAME_VETERAN], rem: [ROLES.SENIOR_FLAME_TROOPER] },
+        "Veteran Trooper-Flame Specialist": { add: [ROLES.FLAME_SPECIALIST], rem: [ROLES.FLAME_VETERAN] },
+        "Flame Specialist-Flame Corporal": { add: [ROLES.FLAME_CORPORAL], rem: [ROLES.FLAME_SPECIALIST] }
     };
 
-    const promoKey = `${currentRank}-${newRank}`;
-    if (standardPromos[promoKey]) {
-        await modDiscordRoles(member, standardPromos[promoKey].add, standardPromos[promoKey].rem);
-        if (webhook) await webhook.send({ content: `✅ Promoted **${username}** from ${currentRank} to ${newRank}.` });
-        return `✅ Promoted ${username} from ${currentRank} to ${newRank}. Roles updated.`;
+    const path = `${currentRank}-${newRank}`;
+    if (progression[path]) {
+        await modDiscordRoles(member, progression[path].add, progression[path].rem);
+        return `✅ ${username} promoted to ${newRank}.`;
     }
 
-    return "⚠️ Promotion path not recognized.";
+    return "⚠️ Rank path not recognized.";
 }
 
 module.exports = { transferUser, handlePromotionRequest };
