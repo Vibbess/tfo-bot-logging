@@ -9,7 +9,7 @@ module.exports = {
 
     // --- DISCORD CHANNELS ---
     CHANNELS: {
-        WELCOME: "1468756387562782732"
+        WELCOME: "1404225235007570040"
     },
 
     // --- ROLE IDs ---
