@@ -1,149 +1,241 @@
-const { GoogleSpreadsheet } = require('google-spreadsheet');
-const { RECRUITS_TAB, JETPACK_TAB, FLAMETROOPER_TAB, DIVISIONAL_STAFF_TAB, HIGH_COMMAND_TAB } = require('./config');
+const { google } = require('googleapis');
 
-function normalizeName(name) {
-    if (!name) return "";
-    return name.toString().split('|')[0].trim().replace(/[@\(\)]/g, "").toLowerCase();
+// --- SHEET NAMES (CHANGE IF NEEDED) ---
+const SHEETS = {
+    RECRUITS: "RECRUITS",
+    JET: "JETPACK COMPANY",
+    FLAME: "FLAMETROOPER COMPANY",
+    DIVISIONAL: "DIVISIONAL STAFF",
+    HIGH: "HIGH COMMAND"
+};
+
+// --- HELPERS ---
+function normalize(name) {
+    return name?.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function extractSection(text, key) {
+    const regex = new RegExp(`${key}:([\\s\\S]*?)(?=\\n[A-Z]|$)`, "i");
+    return regex.exec(text)?.[1]?.trim() || "";
 }
 
 function extractNames(text) {
-    if (!text || /^(N\/?A|None|No attendees|No one)\.?$/i.test(text.trim())) return [];
-    return text.split(/[,\s\n\t|]+/).map(n => normalizeName(n)).filter(n => n.length > 2);
+    if (!text) return [];
+    return text.split(/[\n,]+/)
+        .map(x => normalize(x))
+        .filter(x => x.length > 2);
 }
 
-function updateCell(sheet, rowIdx, colIndex, valToAdd, isBool = false) {
-    const cell = sheet.getCell(rowIdx, colIndex);
-    if (isBool) {
-        cell.value = true;
-        return `Set TRUE`;
-    } else {
-        const oldVal = parseFloat(cell.value) || 0;
-        cell.value = oldVal + valToAdd;
-        return `${oldVal} -> ${cell.value}`;
-    }
+async function getAllRows(sheets, spreadsheetId, tab) {
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${tab}!A:G`
+    });
+    return res.data.values || [];
 }
 
-async function processLog(doc, eventType, input, weekend, executorPing, webhook) {
-    await doc.loadInfo();
-    
-    let host = normalizeName((input.match(/Host(?:ed by)?:\s*([^|\n]+)/i) || [])[1]);
-    let coHosts = extractNames((input.match(/Co-Hosts?:\s*([\s\S]*?)(?=Attendees:|Passed:|Notes:|Proof:|$)/i) || [])[1]);
-    let attendees = extractNames((input.match(/Attendees?:\s*([\s\S]*?)(?=Passed:|Notes:|Proof:|$)/i) || [])[1]);
+async function updateCell(sheets, spreadsheetId, tab, cell, value) {
+    await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `${tab}!${cell}`,
+        valueInputOption: "USER_ENTERED",
+        requestBody: { values: [[value]] }
+    });
+}
 
-    const users = [{ name: host, role: 'Host' }];
-    coHosts.forEach(n => users.push({ name: n, role: 'Co-Host' }));
-    attendees.forEach(n => users.push({ name: n, role: 'Attendee' }));
+async function addValue(sheets, spreadsheetId, tab, cell, amount) {
+    const res = await sheets.spreadsheets.values.get({
+        spreadsheetId,
+        range: `${tab}!${cell}`
+    });
 
-    let logs = [];
-    
+    let current = parseFloat(res.data.values?.[0]?.[0]) || 0;
+    current += amount;
+
+    await updateCell(sheets, spreadsheetId, tab, cell, current);
+}
+
+// --- MAIN ---
+async function processLog(auth, spreadsheetId, input, interaction, webhook) {
+
+    const sheets = google.sheets({ version: 'v4', auth });
+
+    const lower = input.toLowerCase();
+
+    const isWeekend = lower.includes("weekend: true");
+    const isTryout = lower.includes("general tryout");
+
+    const host = normalize(extractSection(input, "Host"));
+    const cohosts = extractNames(extractSection(input, "Co-hosts"));
+    const attendees = extractNames(extractSection(input, "Attendees"));
+
+    const users = [
+        { name: host, role: "host" },
+        ...cohosts.map(n => ({ name: n, role: "cohost" })),
+        ...attendees.map(n => ({ name: n, role: "attendee" }))
+    ];
+
+    let results = [];
+
     for (const user of users) {
-        if (!user.name) continue;
-        const targetName = user.name;
-        
+
+        const username = user.name;
+        if (!username) continue;
+
         let found = false;
 
-        // 1. Check Recruits Tab
-        const rSheet = doc.sheetsByTitle[RECRUITS_TAB];
-        await rSheet.loadCells('A1:G100');
-        for (let r = 0; r < 100; r++) {
-            if (normalizeName(rSheet.getCell(r, 1).value) === targetName) {
+        // --- RECRUITS ---
+        const recruitRows = await getAllRows(sheets, spreadsheetId, SHEETS.RECRUITS);
+
+        for (let i = 0; i < recruitRows.length; i++) {
+            if (normalize(recruitRows[i][1]) === username) {
+                const row = i + 1;
                 found = true;
-                if (user.role === 'Attendee') {
-                    if (eventType === "Patrol") updateCell(rSheet, r, 4, 1); // E
-                    if (eventType === "PT") updateCell(rSheet, r, 5, 0, true); // F
-                    if (eventType !== "Patrol" && eventType !== "PT") updateCell(rSheet, r, 4, 1); // Generic event pt
+
+                if (lower.includes("patrol")) {
+                    await addValue(sheets, spreadsheetId, SHEETS.RECRUITS, `E${row}`, 1);
                 }
+
+                if (lower.includes("physical training")) {
+                    await updateCell(sheets, spreadsheetId, SHEETS.RECRUITS, `F${row}`, "TRUE");
+                }
+
+                results.push(`👤 ${username} (Recruit updated)`);
                 break;
             }
         }
-        if (found) { await rSheet.saveUpdatedCells(); logs.push(`Logged Recruits tab for ${targetName}`); continue; }
 
-        // 2. Check Companies
-        const jSheet = doc.sheetsByTitle[JETPACK_TAB];
-        const fSheet = doc.sheetsByTitle[FLAMETROOPER_TAB];
-        for (const sheet of [jSheet, fSheet]) {
-            if (!sheet) continue;
-            await sheet.loadCells('A1:G100');
-            for (let r = 0; r < 100; r++) {
-                if (normalizeName(sheet.getCell(r, 1).value) === targetName) {
-                    found = true;
-                    if (user.role === 'Attendee') {
-                        updateCell(sheet, r, 4, 1); // E
-                        updateCell(sheet, r, 5, 1); // F
-                        updateCell(sheet, r, 6, 10); // G (Assuming 10 mins in-game time per event)
-                    }
-                    break;
+        // --- JET ---
+        const jetRows = await getAllRows(sheets, spreadsheetId, SHEETS.JET);
+
+        for (let i = 0; i < jetRows.length; i++) {
+            if (normalize(jetRows[i][1]) === username) {
+                const row = i + 1;
+                found = true;
+
+                if (user.role === "attendee") {
+                    await addValue(sheets, spreadsheetId, SHEETS.JET, `E${row}`, 1);
+                    await addValue(sheets, spreadsheetId, SHEETS.JET, `F${row}`, 1);
                 }
+
+                results.push(`🚀 ${username} (Jet updated)`);
+                break;
             }
-            if (found) { await sheet.saveUpdatedCells(); logs.push(`Logged Company tab for ${targetName}`); break; }
         }
-        if (found) continue;
 
-        // 3. Hosts logic / Staff Tabs
-        if (user.role === 'Host' || user.role === 'Co-Host') {
-            const isHost = user.role === 'Host';
-            const mult = weekend ? 2 : 1;
-            
-            let hostPts = isHost ? (1 * mult) : (0.5 * (weekend ? 2 : 1)); // if weekend +1 for cohost
+        // --- FLAME ---
+        const flameRows = await getAllRows(sheets, spreadsheetId, SHEETS.FLAME);
 
-            if (eventType === "General Tryout") {
-                const divSheet = doc.sheetsByTitle[DIVISIONAL_STAFF_TAB];
-                const hcSheet = doc.sheetsByTitle[HIGH_COMMAND_TAB];
-                
-                // Try Divisional
-                if (divSheet) {
-                    await divSheet.loadCells('A1:K100');
-                    for (let r = 0; r < 100; r++) {
-                        if (normalizeName(divSheet.getCell(r, 1).value) === targetName) {
-                            updateCell(divSheet, r, 6, hostPts); // G
-                            updateCell(divSheet, r, 10, hostPts); // K
-                            found = true; break;
-                        }
-                    }
-                    if (found) { await divSheet.saveUpdatedCells(); logs.push(`Logged DivStaff for ${targetName}`); continue; }
+        for (let i = 0; i < flameRows.length; i++) {
+            if (normalize(flameRows[i][1]) === username) {
+                const row = i + 1;
+                found = true;
+
+                if (user.role === "attendee") {
+                    await addValue(sheets, spreadsheetId, SHEETS.FLAME, `E${row}`, 1);
+                    await addValue(sheets, spreadsheetId, SHEETS.FLAME, `F${row}`, 1);
                 }
-                // Try HC
-                if (hcSheet) {
-                    await hcSheet.loadCells('A1:K100');
-                    for (let r = 0; r < 100; r++) {
-                        if (normalizeName(hcSheet.getCell(r, 1).value) === targetName) {
-                            updateCell(hcSheet, r, 6, hostPts); // G
-                            updateCell(hcSheet, r, 7, hostPts); // H
-                            found = true; break;
-                        }
+
+                results.push(`🔥 ${username} (Flame updated)`);
+                break;
+            }
+        }
+
+        // --- TRYOUT LOGIC ---
+        if (isTryout) {
+
+            // DIVISIONAL STAFF
+            const divRows = await getAllRows(sheets, spreadsheetId, SHEETS.DIVISIONAL);
+
+            for (let i = 0; i < divRows.length; i++) {
+                if (normalize(divRows[i][1]) === username) {
+                    const row = i + 1;
+
+                    if (user.role === "host") {
+                        const val = isWeekend ? 2 : 1;
+                        await addValue(sheets, spreadsheetId, SHEETS.DIVISIONAL, `G${row}`, val);
+                        await addValue(sheets, spreadsheetId, SHEETS.DIVISIONAL, `K${row}`, val);
                     }
-                    if (found) { await hcSheet.saveUpdatedCells(); logs.push(`Logged HC for ${targetName}`); continue; }
-                }
-            } else {
-                // Other events for hosts (Assumed Staff sheet or similar handling)
-                const staffSheet = doc.sheetsByTitle[DIVISIONAL_STAFF_TAB]; // Fallback to div staff for F&H
-                if (staffSheet) {
-                    await staffSheet.loadCells('A1:K100');
-                    for (let r = 0; r < 100; r++) {
-                        if (normalizeName(staffSheet.getCell(r, 1).value) === targetName) {
-                            updateCell(staffSheet, r, 5, hostPts); // F
-                            updateCell(staffSheet, r, 7, hostPts); // H
-                            found = true; break;
-                        }
+
+                    if (user.role === "cohost") {
+                        const val = isWeekend ? 1 : 0.5;
+                        await addValue(sheets, spreadsheetId, SHEETS.DIVISIONAL, `G${row}`, val);
                     }
-                    if (found) { await staffSheet.saveUpdatedCells(); logs.push(`Logged Host Points for ${targetName}`); }
                 }
             }
+
+            // HIGH COMMAND
+            const highRows = await getAllRows(sheets, spreadsheetId, SHEETS.HIGH);
+
+            for (let i = 0; i < highRows.length; i++) {
+                if (normalize(highRows[i][1]) === username) {
+                    const row = i + 1;
+
+                    if (user.role === "host") {
+                        const val = isWeekend ? 2 : 1;
+                        await addValue(sheets, spreadsheetId, SHEETS.HIGH, `G${row}`, val);
+                        await addValue(sheets, spreadsheetId, SHEETS.HIGH, `H${row}`, val);
+                    }
+
+                    if (user.role === "cohost") {
+                        const val = isWeekend ? 1 : 0.5;
+                        await addValue(sheets, spreadsheetId, SHEETS.HIGH, `G${row}`, val);
+                    }
+                }
+            }
+
+        } else {
+
+            // --- NORMAL EVENTS ---
+            if (user.role === "host") {
+                const val = isWeekend ? 2 : 1;
+
+                await updateGeneralSheets(sheets, spreadsheetId, username, val, "host");
+            }
+
+            if (user.role === "cohost") {
+                const val = isWeekend ? 1 : 0.5;
+
+                await updateGeneralSheets(sheets, spreadsheetId, username, val, "cohost");
+            }
+        }
+
+        if (!found) {
+            results.push(`❌ ${username} not found`);
         }
     }
 
     if (webhook) {
         await webhook.send({
-            embeds: [{
-                title: "Event Logged",
-                description: `**Type:** ${eventType}\n**Host:** ${host}\n**Attendees:** ${attendees.length}\n**Weekend Multiplier:** ${weekend}\n\n**Executor:** ${executorPing}`,
-                color: 0x3498DB,
-                timestamp: new Date()
-            }]
+            content: `📋 Event Logged by <@${interaction.user.id}>`
         });
     }
 
-    return logs.length > 0 ? `✅ Log processed successfully.\n${logs.join('\n')}` : `⚠️ Processed, but no users matched in the sheets.`;
+    return results.join("\n");
+}
+
+// --- GENERAL EVENT UPDATE ---
+async function updateGeneralSheets(sheets, spreadsheetId, username, value, role) {
+
+    for (const tab of [SHEETS.DIVISIONAL, SHEETS.HIGH]) {
+
+        const rows = await getAllRows(sheets, spreadsheetId, tab);
+
+        for (let i = 0; i < rows.length; i++) {
+            if (normalize(rows[i][1]) === username) {
+                const row = i + 1;
+
+                if (role === "host") {
+                    await addValue(sheets, spreadsheetId, tab, `F${row}`, value);
+                    await addValue(sheets, spreadsheetId, tab, `H${row}`, value);
+                }
+
+                if (role === "cohost") {
+                    await addValue(sheets, spreadsheetId, tab, `F${row}`, value);
+                }
+            }
+        }
+    }
 }
 
 module.exports = { processLog };
