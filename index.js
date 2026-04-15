@@ -72,11 +72,18 @@ const commands = [
         .addStringOption(o => o.setName('result').setDescription('Pass or Fail').setRequired(true)
             .addChoices({name: 'Pass', value: 'pass'}, {name: 'Fail', value: 'fail'})),
 
-    new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank and update sheets')
-        .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
-        .addUserOption(o => o.setName('discorduser').setDescription('Discord User (@)').setRequired(true))
-        .addStringOption(o => o.setName('current_rank').setDescription('Current Rank').setRequired(true))
-        .addStringOption(o => o.setName('new_rank').setDescription('Target Rank').setRequired(true)),
+   // Inside your commands array in index.js:
+new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank and update sheets')
+    .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
+    .addUserOption(o => o.setName('discorduser').setDescription('Discord User (@)').setRequired(true))
+    .addStringOption(o => o.setName('current_rank')
+        .setDescription('Current Rank')
+        .setRequired(true)
+        .setAutocomplete(true)) // <--- ADD THIS
+    .addStringOption(o => o.setName('new_rank')
+        .setDescription('Target Rank')
+        .setRequired(true)
+        .setAutocomplete(true)), // <--- ADD THIS
 
     new SlashCommandBuilder().setName('eventlog').setDescription('Log a divisional event')
         .addStringOption(o => o.setName('event_type').setDescription('Type of event').setRequired(true)
@@ -124,6 +131,26 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Authorized <@${target.id}> for /${cmd}.`, flags: [MessageFlags.Ephemeral] });
     }
 
+
+// --- AUTOCOMPLETE HANDLER ---
+if (interaction.isAutocomplete()) {
+    const focusedValue = interaction.options.getFocused().toUpperCase();
+    
+    const choices = [
+        'PLACEMENT', 'PVT', 'RECRUIT', 
+        'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
+        'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL',
+        'PHASE 2'
+    ];
+
+    // Filter choices based on what the user is currently typing
+    const filtered = choices.filter(choice => choice.startsWith(focusedValue)).slice(0, 25);
+    
+    await interaction.respond(
+        filtered.map(choice => ({ name: choice, value: choice }))
+    );
+    return;
+}
     // 2. Command Access Checks
     const highCmds = ['rank', 'inactivitynotice', 'bgc'];
     const logCmds = ['eventlog', 'timelog'];
@@ -177,16 +204,24 @@ client.on('interactionCreate', async (interaction) => {
                 await interaction.editReply("Background check marked as Fail.");
             }
 
-        } else if (commandName === 'inactivitynotice') {
-            const target = options.getUser('discorduser');
-            const targetMember = await guild.members.fetch(target.id);
-            await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
-            
-            // Note: Sheets logic for notice (PLACEMENT/RECRUITS/JET/FLAME check) 
-            // should be handled in a helper function within ranker.js or a dedicated notice handler.
-            
-            if (logChannel) logChannel.send(`**Inactivity Notice:** <@${target.id}> issued by <@${user.id}>`);
-            await interaction.editReply(`Inactivity notice issued to <@${target.id}>.`);
+// Inside index.js interaction handler:
+} else if (commandName === 'inactivitynotice') {
+    const target = options.getUser('discorduser');
+    const robloxName = options.getString('robloxusername');
+    const duration = options.getString('duration');
+    const targetMember = await guild.members.fetch(target.id);
+
+    // 1. Add the Discord Role
+    await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
+    
+    // 2. Update the Spreadsheet
+    const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
+    
+    if (logChannel) {
+        logChannel.send(`🕒 **Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
+    }
+    await interaction.editReply(`✅ Notice issued to **${robloxName}**. ${sheetResult}`);
+
 
         } else if (commandName === 'rank') {
             const result = await transferUser(auth, SHEET_ID, interaction, logChannel);
@@ -218,9 +253,20 @@ try {
 client.once('ready', async (c) => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
     try {
-        await rest.put(Routes.applicationGuildCommands(c.user.id, cfg.GUILD_ID), { body: commands });
+        console.log('Started refreshing application (/) commands.');
+
+        // This line overwrites the guild's command list with ONLY what is in your 'commands' array.
+        // Anything not in that array will be automatically deleted by Discord.
+        await rest.put(
+            Routes.applicationGuildCommands(c.user.id, cfg.GUILD_ID),
+            { body: commands }
+        );
+
         console.log(`System Online: ${c.user.tag}`);
-    } catch (e) { console.error(e); }
+        console.log('Commands synchronized. Old/Unused commands have been removed.');
+    } catch (e) { 
+        console.error('Failed to sync commands:', e); 
+    }
 });
 
 client.login(TOKEN);
