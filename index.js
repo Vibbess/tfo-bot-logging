@@ -1,330 +1,226 @@
 require('dotenv').config();
-const {
-    Client,
-    GatewayIntentBits,
-    REST,
-    Routes,
-    SlashCommandBuilder,
-    WebhookClient,
-    MessageFlags
+const { 
+    Client, 
+    GatewayIntentBits, 
+    REST, 
+    Routes, 
+    SlashCommandBuilder, 
+    MessageFlags,
+    EmbedBuilder
 } = require('discord.js');
 const { google } = require('googleapis');
 const fs = require('fs');
 
-// --- IMPORT YOUR SYSTEM FILES ---
+// Imports
+const cfg = require('./config');
 const { transferUser } = require('./ranker');
 const { processLog } = require('./logger');
-const { runBackgroundCheck } = require('./bgc');
-const { handlePromotionRequest } = require('./promotionRequest');
 
-// --- CONFIG ---
+// --- SETUP ---
 const TOKEN = process.env.DISCORD_TOKEN;
 const SHEET_ID = process.env.SHEET_ID;
-const ALLOWED_GUILD_ID = "1469734105292865768";
-
-// ROLE IDS
-const AUTH_ROLE = "1369082109184053474";
-const PROMO_ROLE = "1443766165536247808";
-
-// WEBHOOK
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const TOKEN_PATH = './tokens.json';
+const PERMS_PATH = './permissions.json';
 
-// --- GOOGLE SETUP ---
+// Google OAuth2
 const credentials = JSON.parse(fs.readFileSync('client_secret.json'));
 const { client_id, client_secret, redirect_uris } = credentials.web;
-const oAuth2Client = new google.auth.OAuth2(
-    client_id,
-    client_secret,
-    redirect_uris[0]
-);
+const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
 
-// --- CLIENT ---
-const client = new Client({
+const client = new Client({ 
     intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages
-    ]
+        GatewayIntentBits.Guilds, 
+        GatewayIntentBits.GuildMessages, 
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildMembers
+    ] 
 });
 
-// --- WEBHOOK ---
-let webhook = null;
-if (WEBHOOK_URL && WEBHOOK_URL.startsWith('http')) {
-    webhook = new WebhookClient({ url: WEBHOOK_URL });
+// --- HELPERS ---
+function getPermissions() {
+    if (!fs.existsSync(PERMS_PATH)) return {};
+    try { return JSON.parse(fs.readFileSync(PERMS_PATH)); } catch { return {}; }
 }
 
-// --- HELPERS ---
-function hasRole(member, roleId) {
-    return member.roles.cache.has(roleId);
+function savePermissions(perms) {
+    fs.writeFileSync(PERMS_PATH, JSON.stringify(perms, null, 2));
 }
 
 async function getUserSheets(userId) {
     if (!fs.existsSync(TOKEN_PATH)) return null;
     const db = JSON.parse(fs.readFileSync(TOKEN_PATH));
-    const tokens = db[userId];
-    if (!tokens) return null;
-
+    const userTokens = db[userId];
+    if (!userTokens) return null;
     const auth = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
-    auth.setCredentials(tokens);
+    auth.setCredentials(userTokens);
     return auth;
 }
 
-async function logWebhook(message) {
-    if (!webhook) return;
-    try {
-        await webhook.send({ content: message });
-    } catch (e) {
-        console.error("Webhook error:", e.message);
-    }
-}
-
-// --- COMMANDS ---
+// --- COMMAND DEFINITIONS ---
 const commands = [
+    new SlashCommandBuilder().setName('authorize').setDescription('Authorize a user for a specific command')
+        .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+        .addStringOption(o => o.setName('command').setDescription('Command name').setRequired(true)),
 
-    new SlashCommandBuilder()
-        .setName('verify')
-        .setDescription('Link Google account'),
+    new SlashCommandBuilder().setName('verify').setDescription('Connect your Google account'),
+    new SlashCommandBuilder().setName('confirm').setDescription('Finalize verification with code')
+        .addStringOption(o => o.setName('code').setDescription('Code from Google URL').setRequired(true)),
 
-    new SlashCommandBuilder()
-        .setName('confirm')
-        .setDescription('Confirm Google auth')
-        .addStringOption(o =>
-            o.setName('code')
-                .setRequired(true)
-                .setDescription('OAuth code')
-        ),
+    new SlashCommandBuilder().setName('bgc').setDescription('Background check results')
+        .addStringOption(o => o.setName('robloxuserid').setDescription('Roblox User ID').setRequired(true))
+        .addUserOption(o => o.setName('discorduser').setDescription('Discord User').setRequired(true))
+        .addStringOption(o => o.setName('result').setDescription('Pass or Fail').setRequired(true)
+            .addChoices({name: 'Pass', value: 'pass'}, {name: 'Fail', value: 'fail'})),
 
-    new SlashCommandBuilder()
-        .setName('requestpromotion')
-        .setDescription('Request promotion test')
-        .addStringOption(o =>
-            o.setName('robloxusername')
-                .setRequired(true)
-                .setDescription('Roblox Username')
-        ),
+    new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank and update sheets')
+        .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
+        .addUserOption(o => o.setName('discorduser').setDescription('Discord User (@)').setRequired(true))
+        .addStringOption(o => o.setName('current_rank').setDescription('Current Rank').setRequired(true))
+        .addStringOption(o => o.setName('new_rank').setDescription('Target Rank').setRequired(true)),
 
-    new SlashCommandBuilder()
-        .setName('bgc')
-        .setDescription('Background check')
-        .addStringOption(o =>
-            o.setName('robloxid')
-                .setRequired(true)
-                .setDescription('Roblox ID')
-        )
-        .addStringOption(o =>
-            o.setName('discordid')
-                .setRequired(true)
-                .setDescription('Discord User ID')
-        )
-        .addStringOption(o =>
-            o.setName('result')
-                .setRequired(true)
-                .setDescription('Pass or Fail')
-                .addChoices(
-                    { name: 'Pass', value: 'pass' },
-                    { name: 'Fail', value: 'fail' }
-                )
-        ),
+    new SlashCommandBuilder().setName('eventlog').setDescription('Log a divisional event')
+        .addStringOption(o => o.setName('event_type').setDescription('Type of event').setRequired(true)
+            .addChoices(
+                { name: 'Patrol', value: 'Patrol' },
+                { name: 'General Tryout', value: 'General Tryout' },
+                { name: 'General Training (GT)', value: 'General Training (GT)' },
+                { name: 'OTS CT', value: 'OTS CT' },
+                { name: 'TPS CT', value: 'TPS CT' },
+                { name: 'Inspections', value: 'Inspections' }
+            ))
+        .addStringOption(o => o.setName('input').setDescription('Attendees / Raw Log').setRequired(true))
+        .addBooleanOption(o => o.setName('weekend').setDescription('Is it the weekend?').setRequired(true)),
 
-    new SlashCommandBuilder()
-        .setName('rank')
-        .setDescription('Rank user')
-        .addStringOption(o =>
-            o.setName('robloxusername')
-                .setRequired(true)
-                .setDescription('Roblox Username')
-        )
-        .addUserOption(o =>
-            o.setName('discorduser')
-                .setRequired(true)
-                .setDescription('Discord User')
-        )
-        .addStringOption(o =>
-            o.setName('rank')
-                .setRequired(true)
-                .setDescription('New Rank')
-        ),
+    new SlashCommandBuilder().setName('timelog').setDescription('Log in-game time')
+        .addStringOption(o => o.setName('input').setDescription('Log text').setRequired(true)),
 
-    new SlashCommandBuilder()
-        .setName('eventlog')
-        .setDescription('Log event')
-        .addStringOption(o =>
-            o.setName('eventtype')
-                .setRequired(true)
-                .setDescription('Event Type')
-        )
-        .addStringOption(o =>
-            o.setName('input')
-                .setRequired(true)
-                .setDescription('Event log text')
-        )
-        .addStringOption(o =>
-            o.setName('weekend')
-                .setRequired(true)
-                .addChoices(
-                    { name: 'True', value: 'true' },
-                    { name: 'False', value: 'false' }
-                )
-        )
+    new SlashCommandBuilder().setName('inactivitynotice').setDescription('Issue an inactivity notice')
+        .addUserOption(o => o.setName('discorduser').setDescription('Discord User').setRequired(true))
+        .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
+        .addStringOption(o => o.setName('duration').setDescription('Notice length').setRequired(true)
+            .addChoices({name: 'One Reset (Next Sat)', value: 'one'}, {name: 'Two Resets (Following Sat)', value: 'two'}))
+].map(cmd => cmd.toJSON());
 
-].map(c => c.toJSON());
-
-// --- INTERACTIONS ---
+// --- INTERACTION HANDLER ---
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.guildId !== ALLOWED_GUILD_ID) return;
+    const { commandName, user, options, member, guild } = interaction;
+    const logChannel = guild.channels.cache.get(cfg.LOG_CHANNEL);
 
-    const { commandName, user, member, options } = interaction;
+    // Permissions Logic
+    const isAuthorizedAdmin = member.roles.cache.has(cfg.PERMS.AUTHORIZE_ROLE);
+    const isHighCommand = member.roles.cache.has(cfg.PERMS.HIGH_COMMAND_ROLE);
+    const isLoggingRole = member.roles.cache.has(cfg.PERMS.LOGGING_ROLE);
 
-    // --- ROLE PERMISSIONS ---
-    if (['rank', 'eventlog', 'bgc'].includes(commandName)) {
-        if (!hasRole(member, AUTH_ROLE)) {
-            return interaction.reply({
-                content: "❌ Unauthorized.",
-                flags: [MessageFlags.Ephemeral]
-            });
-        }
+    // 1. Authorize Command check
+    if (commandName === 'authorize') {
+        if (!isAuthorizedAdmin) return interaction.reply({ content: "Access Denied.", flags: [MessageFlags.Ephemeral] });
+        const target = options.getUser('user');
+        const cmd = options.getString('command');
+        const perms = getPermissions();
+        if (!perms[target.id]) perms[target.id] = [];
+        perms[target.id].push(cmd);
+        savePermissions(perms);
+        return interaction.reply({ content: `Authorized <@${target.id}> for /${cmd}.`, flags: [MessageFlags.Ephemeral] });
     }
 
-    if (commandName === 'requestpromotion') {
-        if (!hasRole(member, PROMO_ROLE)) {
-            return interaction.reply({
-                content: "❌ Unauthorized.",
-                flags: [MessageFlags.Ephemeral]
-            });
-        }
+    // 2. Command Access Checks
+    const highCmds = ['rank', 'inactivitynotice', 'bgc'];
+    const logCmds = ['eventlog', 'timelog'];
+
+    if (highCmds.includes(commandName) && !isHighCommand) {
+        return interaction.reply({ content: "High Command role required.", flags: [MessageFlags.Ephemeral] });
+    }
+    if (logCmds.includes(commandName) && !isLoggingRole && !isHighCommand) {
+        return interaction.reply({ content: "Logging permission required.", flags: [MessageFlags.Ephemeral] });
     }
 
-    // --- VERIFY ---
+    // 3. Google Auth Commands
     if (commandName === 'verify') {
-        const url = oAuth2Client.generateAuthUrl({
-            access_type: 'offline',
-            prompt: 'consent',
-            scope: ['https://www.googleapis.com/auth/spreadsheets']
-        });
-
-        return interaction.reply({
-            content: `🔗 Login: ${url}`,
-            flags: [MessageFlags.Ephemeral]
-        });
+        const url = oAuth2Client.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/spreadsheets'] });
+        return interaction.reply({ content: `[Verify Google Account](${url})`, flags: [MessageFlags.Ephemeral] });
     }
 
-    // --- CONFIRM ---
     if (commandName === 'confirm') {
         const code = options.getString('code');
-
         try {
             const { tokens } = await oAuth2Client.getToken(code);
-            const db = fs.existsSync(TOKEN_PATH)
-                ? JSON.parse(fs.readFileSync(TOKEN_PATH))
-                : {};
-
+            const db = fs.existsSync(TOKEN_PATH) ? JSON.parse(fs.readFileSync(TOKEN_PATH)) : {};
             db[user.id] = tokens;
             fs.writeFileSync(TOKEN_PATH, JSON.stringify(db, null, 2));
-
-            return interaction.reply({
-                content: "✅ Verified!",
-                flags: [MessageFlags.Ephemeral]
-            });
-
-        } catch {
-            return interaction.reply({
-                content: "❌ Invalid code.",
-                flags: [MessageFlags.Ephemeral]
-            });
-        }
+            return interaction.reply({ content: "Successfully verified!", flags: [MessageFlags.Ephemeral] });
+        } catch { return interaction.reply({ content: "Invalid code.", flags: [MessageFlags.Ephemeral] }); }
     }
 
-    // --- REQUIRE GOOGLE AUTH ---
+    // 4. Data-heavy Commands
     await interaction.deferReply();
-
     const auth = await getUserSheets(user.id);
-    if (!auth) {
-        return interaction.editReply("❌ Use /verify first.");
-    }
+    if (!auth) return interaction.editReply("Run `/verify` first.");
 
     try {
-
-        // --- PROMOTION REQUEST ---
-        if (commandName === 'requestpromotion') {
-            const result = await handlePromotionRequest(
-                auth,
-                options.getString('robloxusername'),
-                interaction,
-                webhook
-            );
-
-            await logWebhook(`📈 Promotion Request by <@${user.id}>`);
-            return interaction.editReply(result);
-        }
-
-        // --- BGC ---
         if (commandName === 'bgc') {
-            const result = await runBackgroundCheck(
-                options.getString('robloxid'),
-                options.getString('discordid'),
-                options.getString('result'),
-                interaction
-            );
+            const res = options.getString('result');
+            const target = options.getUser('discorduser');
+            const targetMember = await guild.members.fetch(target.id);
 
-            await logWebhook(`🛡️ BGC by <@${user.id}>`);
-            return interaction.editReply(result);
-        }
+            if (res === 'pass') {
+                await targetMember.roles.add(cfg.GENERAL_ROLES.BGC_PASS);
+                await targetMember.roles.remove(cfg.GENERAL_ROLES.BGC_REMOVE);
+                
+                const welcomeMsg = `<@${target.id}>\n>\n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n>\n> Please ensure to inspect all the channels that follow:\n>\n> https://discord.com/channels/1369082109184053469/1403809864483995648 - Placement Information.\n> https://discord.com/channels/1369082109184053469/1443777053987049562 - Test scores.\n> https://discord.com/channels/1369082109184053469/1369082110006267988 - Rules.\n> https://discord.com/channels/1369082109184053469/1443405151149752452 - FAQ.\n>\n> -# Signed, FN Trooper Corps Officer Team`;
+                
+                await guild.channels.cache.get(cfg.WELCOME_CHANNEL).send(welcomeMsg);
+                if (logChannel) logChannel.send(`**BGC Passed:** <@${target.id}> by <@${user.id}>`);
+                await interaction.editReply(`Background check passed for <@${target.id}>.`);
+            } else {
+                if (logChannel) logChannel.send(`**BGC Failed:** <@${target.id}> by <@${user.id}>`);
+                await interaction.editReply("Background check marked as Fail.");
+            }
 
-        // --- RANK ---
-        if (commandName === 'rank') {
-            const result = await transferUser(
-                auth,
-                SHEET_ID,
-                options.getString('robloxusername'),
-                options.getUser('discorduser'),
-                options.getString('rank'),
-                interaction,
-                webhook
-            );
+        } else if (commandName === 'inactivitynotice') {
+            const target = options.getUser('discorduser');
+            const targetMember = await guild.members.fetch(target.id);
+            await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
+            
+            // Note: Sheets logic for notice (PLACEMENT/RECRUITS/JET/FLAME check) 
+            // should be handled in a helper function within ranker.js or a dedicated notice handler.
+            
+            if (logChannel) logChannel.send(`**Inactivity Notice:** <@${target.id}> issued by <@${user.id}>`);
+            await interaction.editReply(`Inactivity notice issued to <@${target.id}>.`);
 
-            await logWebhook(`📊 Rank used by <@${user.id}>`);
-            return interaction.editReply(result);
-        }
+        } else if (commandName === 'rank') {
+            const result = await transferUser(auth, SHEET_ID, interaction, logChannel);
+            await interaction.editReply(result);
 
-        // --- EVENT LOG ---
-        if (commandName === 'eventlog') {
-            const formatted = `
-Event: ${options.getString('eventtype')}
-Weekend: ${options.getString('weekend')}
-${options.getString('input')}
-`;
+        } else if (commandName === 'eventlog' || commandName === 'timelog') {
+            const input = options.getString('input');
+            const type = options.getString('event_type') || "Time Log";
+            const weekend = options.getBoolean('weekend') || false;
 
-            const result = await processLog(
-                auth,
-                SHEET_ID,
-                formatted,
-                interaction,
-                webhook
-            );
-
-            await logWebhook(`📋 Event logged by <@${user.id}>`);
-            return interaction.editReply(result);
+            const formattedInput = `Event: ${type}\nWeekend: ${weekend}\n${input}`;
+            const result = await processLog(auth, SHEET_ID, commandName, formattedInput);
+            
+            if (logChannel) logChannel.send(`**Activity Logged:**\nUser: <@${user.id}>\nType: ${type}\nResult: \n${result}`);
+            await interaction.editReply("Log processed and saved to sheets.");
         }
 
     } catch (err) {
         console.error(err);
-        return interaction.editReply(`❌ Error: ${err.message}`);
+        await interaction.editReply(`Error: ${err.message}`);
     }
 });
 
-// --- READY ---
+try {
+    require('./group-logs.js');
+} catch(e) {}
+
+
 client.once('ready', async (c) => {
-    console.log(`Logged in as ${c.user.tag}`);
-
     const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-    await rest.put(
-        Routes.applicationGuildCommands(c.user.id, ALLOWED_GUILD_ID),
-        { body: commands }
-    );
-
-    console.log("✅ Commands registered");
+    try {
+        await rest.put(Routes.applicationGuildCommands(c.user.id, cfg.GUILD_ID), { body: commands });
+        console.log(`System Online: ${c.user.tag}`);
+    } catch (e) { console.error(e); }
 });
 
 client.login(TOKEN);
