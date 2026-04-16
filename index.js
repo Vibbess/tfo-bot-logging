@@ -118,7 +118,7 @@ if (interaction.isAutocomplete()) {
 // Inside index.js -> interactionCreate
 if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
     choices = [
-        'PLACEMENT', 'PHASE 2', 'RECRUIT', 
+        'PHASE 1', 'PHASE 2', 
         'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
         'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL'
     ];
