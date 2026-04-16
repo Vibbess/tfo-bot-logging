@@ -108,8 +108,33 @@ new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank 
             .addChoices({name: 'One Reset (Next Sat)', value: 'one'}, {name: 'Two Resets (Following Sat)', value: 'two'}))
 ].map(cmd => cmd.toJSON());
 
+
 // --- INTERACTION HANDLER ---
 client.on('interactionCreate', async (interaction) => {
+if (interaction.isAutocomplete()) {
+        const focusedOption = interaction.options.getFocused(true);
+        let choices = [];
+
+        if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
+            choices = [
+                'PLACEMENT', 'PVT', 'RECRUIT', 
+                'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
+                'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL',
+                'PHASE 2'
+            ];
+        }
+
+        const filtered = choices
+            .filter(choice => choice.startsWith(focusedOption.value.toUpperCase()))
+            .slice(0, 25);
+
+        await interaction.respond(
+            filtered.map(choice => ({ name: choice, value: choice }))
+        );
+        return; 
+    }
+
+    // --- 2. CHAT COMMAND HANDLER ---
     if (!interaction.isChatInputCommand()) return;
     const { commandName, user, options, member, guild } = interaction;
     const logChannel = guild.channels.cache.get(cfg.LOG_CHANNEL);
@@ -131,26 +156,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `Authorized <@${target.id}> for /${cmd}.`, flags: [MessageFlags.Ephemeral] });
     }
 
-
-// --- AUTOCOMPLETE HANDLER ---
-if (interaction.isAutocomplete()) {
-    const focusedValue = interaction.options.getFocused().toUpperCase();
     
-    const choices = [
-        'PLACEMENT', 'PVT', 'RECRUIT', 
-        'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
-        'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL',
-        'PHASE 2'
-    ];
-
-    // Filter choices based on what the user is currently typing
-    const filtered = choices.filter(choice => choice.startsWith(focusedValue)).slice(0, 25);
-    
-    await interaction.respond(
-        filtered.map(choice => ({ name: choice, value: choice }))
-    );
-    return;
-}
     // 2. Command Access Checks
     const highCmds = ['rank', 'inactivitynotice', 'bgc'];
     const logCmds = ['eventlog', 'timelog'];
@@ -252,20 +258,29 @@ try {
 
 client.once('ready', async (c) => {
     const rest = new REST({ version: '10' }).setToken(TOKEN);
+    
     try {
-        console.log('Started refreshing application (/) commands.');
+        console.log('--- 🧹 STARTING COMMAND CLEANUP ---');
 
-        // This line overwrites the guild's command list with ONLY what is in your 'commands' array.
-        // Anything not in that array will be automatically deleted by Discord.
+        // Step 1: Wipe Global Commands (The ones that follow the bot everywhere)
+        await rest.put(Routes.applicationCommands(c.user.id), { body: [] });
+        console.log('✅ Global commands cleared.');
+
+        // Step 2: Wipe Guild Commands (The ones stuck in your specific server)
+        await rest.put(Routes.applicationGuildCommands(c.user.id, cfg.GUILD_ID), { body: [] });
+        console.log('✅ Guild commands cleared.');
+
+        // Step 3: Register Fresh Commands (With Autocomplete enabled)
         await rest.put(
             Routes.applicationGuildCommands(c.user.id, cfg.GUILD_ID),
             { body: commands }
         );
+        
+        console.log(`✅ ${c.user.tag} is online.`);
+        console.log('🚀 Commands synced! RESTART YOUR DISCORD APP (Ctrl+R) to see changes.');
 
-        console.log(`System Online: ${c.user.tag}`);
-        console.log('Commands synchronized. Old/Unused commands have been removed.');
-    } catch (e) { 
-        console.error('Failed to sync commands:', e); 
+    } catch (error) {
+        console.error('❌ Error during command sync:', error);
     }
 });
 
