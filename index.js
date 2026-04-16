@@ -224,9 +224,9 @@ if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') 
     const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
     
     if (logChannel) {
-        logChannel.send(`🕒 **Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
+        logChannel.send(`**Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
     }
-    await interaction.editReply(`✅ Notice issued to **${robloxName}**. ${sheetResult}`);
+    await interaction.editReply(`Notice issued to **${robloxName}**. ${sheetResult}`);
 
 
         } else if (commandName === 'rank') {
