@@ -53,8 +53,7 @@ module.exports = {
 
     // --- SHEET COLUMN CONFIG ---
     SHEETS_MAP: {
-// Change this line in config.js:
-        "PLACEMENT": { userCol: 'B', scoreCol: 'A', phaseCol: 'C', inactCol: 'G' },
+        "PLACEMENT": { userCol: 'C', scoreCol: 'B', phaseCol: 'C', inactCol: 'G' },
         "RECRUITS": { userCol: 'B', rankCol: 'C', dateCol: 'D', ptsCol: 'E', ptCol: 'F', inactCol: 'H' },
         "JETPACK COMPANY": { userCol: 'B', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
         "FLAMETROOPER COMPANY": { userCol: 'B', rankCol: 'C', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
