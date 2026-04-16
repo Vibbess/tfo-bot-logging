@@ -181,11 +181,22 @@ async function updateDiscordRoles(member, newRank) {
  * Helper to match Rank Name to Sheet Tab
  */
 function getTabFromRank(rank) {
+    if (!rank) return null;
     const r = rank.toUpperCase();
-    if (r === "PLACEMENT") return cfg.TABS.PLACEMENT;
-    if (r.includes("RECRUIT") || r === "PVT") return cfg.TABS.RECRUITS;
+
+    // 1. Phase 2 is on the Placement sheet
+    if (r === "PHASE 2" || r === "PLACEMENT") {
+        return cfg.TABS.PLACEMENT;
+    }
+
+    // 2. Divisional Ranks (Jetpack / Flame)
+    // We check these first so "JET RECRUIT" goes to JETPACK COMPANY
     if (r.includes("JET")) return cfg.TABS.JETPACK;
     if (r.includes("FLAME")) return cfg.TABS.FLAME;
+
+    // 3. Standard Recruits
+    if (r.includes("RECRUIT")) return cfg.TABS.RECRUITS;
+
     return null; 
 }
 
