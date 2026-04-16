@@ -16,6 +16,11 @@ function getNextSaturday(weeksOut = 1) {
  * Main Transfer and Ranking Logic
  */
 async function transferUser(auth, spreadsheetId, robloxUser, discordMember, currentRank, newRank) {
+    // --- SAFETY CHECK: Prevent the "includes" error ---
+    if (!currentRank || !newRank) {
+        return "❌ Error: Current rank or New rank is missing.";
+    }
+
     const sheets = google.sheets({ version: 'v4', auth });
 
     // --- 1. PLACEMENT: PHASE 1 TO PHASE 2 ---
@@ -30,30 +35,26 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
 
         if (rowIndex === -1) return `❌ User **${robloxUser}** not found in Column C of Placement sheet.`;
 
-        // Check score in Column B (Index 1)
         const score = parseInt(rows[rowIndex][1] || 0);
         const rowNum = rowIndex + 1;
 
         if (score >= 7) {
-            // Update Column C to PHASE2
             await sheets.spreadsheets.values.update({
                 spreadsheetId, range: `${cfg.TABS.PLACEMENT}!C${rowNum}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [["PHASE2"]] }
             });
-            // Update Discord Roles
             await discordMember.roles.add(cfg.PHASE_TWO_ROLE);
             await discordMember.roles.remove(cfg.PHASE_ONE_ROLE);
-            return `✅ **${robloxUser}** passed! Moved to Phase 2 on sheet and Discord.`;
+            return `✅ **${robloxUser}** passed! Moved to Phase 2.`;
         } else {
-            // Fail logic: Add +1 to Column F (Index 5)
             const currentF = parseInt(rows[rowIndex][5] || 0);
             await sheets.spreadsheets.values.update({
                 spreadsheetId, range: `${cfg.TABS.PLACEMENT}!F${rowNum}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [[currentF + 1]] }
             });
-            return `⚠️ **${robloxUser}** score was ${score} (Needs 7). Added +1 fail to Column F.`;
+            return `⚠️ **${robloxUser}** score was ${score}. Added +1 fail to Column F.`;
         }
     }
 
@@ -64,14 +65,13 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
             range: `${cfg.TABS.PLACEMENT}!B1:D500` 
         });
         const rows = res.data.values || [];
-        // Check username in Column B (Index 0 of the range B:D)
         const rowIndex = rows.findIndex(r => r[0] && r[0].toLowerCase() === robloxUser.toLowerCase());
+        
         if (rowIndex === -1) return `❌ **${robloxUser}** not found in Column B of Placement.`;
 
-        const dateJoined = rows[rowIndex][2] || "Unknown"; 
+        const dateJoined = rows[rowIndex][2] || "01/01/2026"; 
         const rowNum = rowIndex + 1;
 
-        // Find empty slot in RECRUITS where B = "B"
         const recRes = await sheets.spreadsheets.values.get({ 
             spreadsheetId, 
             range: `${cfg.TABS.RECRUITS}!B1:B500` 
@@ -81,27 +81,25 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
 
         if (targetRow === 0) return "❌ No available 'B' slot found on RECRUITS sheet.";
 
-        // Write to RECRUITS (B=Username, C=Rank, D=DateJoined)
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${cfg.TABS.RECRUITS}!B${targetRow}:D${targetRow}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [[robloxUser, newRank, dateJoined]] }
         });
 
-        // Reset the row in PLACEMENT
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${cfg.TABS.PLACEMENT}!B${rowNum}:G${rowNum}`,
             valueInputOption: 'USER_ENTERED',
             requestBody: { values: [["N/A", "PHASE1", "01/01/2026", "FALSE", "0", "FALSE"]] }
         });
 
-        // Discord Roles & Welcome Message handled in index.js for embed formatting
         return { status: "SUCCESS_TO_RECRUIT", user: robloxUser, rank: newRank, date: dateJoined };
     }
 
     // --- 3. RECRUIT -> TROOPER (JET/FLAME) ---
+    // Added safety check for .includes()
     if (currentRank.includes("Recruit") && newRank.includes("Trooper")) {
-        const isJet = currentRank.includes("Jet");
+        const isJet = currentRank.toLowerCase().includes("jet");
         const targetTab = isJet ? cfg.TABS.JETPACK : cfg.TABS.FLAME;
         
         const recRes = await sheets.spreadsheets.values.get({ 
@@ -112,16 +110,17 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
         const rowIndex = recRows.findIndex(r => r[0] && r[0].toLowerCase() === robloxUser.toLowerCase());
 
         if (rowIndex === -1) return `❌ **${robloxUser}** not found on RECRUITS sheet.`;
-        const dateJoined = recRows[rowIndex][2];
+        const dateJoined = recRows[rowIndex][2] || "01/01/2026";
         const rowNum = rowIndex + 1;
 
-        // Move to Company Sheet (Look for B = "N/A")
         const compRes = await sheets.spreadsheets.values.get({ 
             spreadsheetId, 
             range: `${targetTab}!B1:B500` 
         });
         const compRows = compRes.data.values || [];
         const targetRow = compRows.findIndex(r => r[0] === "N/A") + 1;
+
+        if (targetRow === 0) return `❌ No 'N/A' slot found on ${targetTab} sheet.`;
 
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${targetTab}!B${targetRow}`,
@@ -131,13 +130,11 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
             spreadsheetId, range: `${targetTab}!D${targetRow}`,
             valueInputOption: 'USER_ENTERED', requestBody: { values: [[dateJoined]] }
         });
-        // Set I = TRUE with "New Trooper" note
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${targetTab}!I${targetRow}`,
             valueInputOption: 'USER_ENTERED', requestBody: { values: [["TRUE"]] }
         });
 
-        // Reset Recruit Row
         await sheets.spreadsheets.values.update({
             spreadsheetId, range: `${cfg.TABS.RECRUITS}!B${rowNum}:H${rowNum}`,
             valueInputOption: 'USER_ENTERED',
@@ -147,7 +144,7 @@ async function transferUser(auth, spreadsheetId, robloxUser, discordMember, curr
         return { status: "SUCCESS_TO_TROOPER", user: robloxUser, type: isJet ? "JET" : "FLAME" };
     }
 
-    return "❌ This rank combination is not currently supported by the automation.";
+    return "❌ This rank combination is not currently supported.";
 }
 
 module.exports = { transferUser, getNextSaturday };
