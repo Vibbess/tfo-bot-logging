@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
 const cfg = require('./config');
+const { EmbedBuilder } = require('discord.js');
 
 /**
  * Main function to handle rank changes and sheet transfers
@@ -16,88 +17,117 @@ async function transferUser(auth, spreadsheetId, interaction, logChannel) {
     const targetTab = getTabFromRank(newRank);
 
     if (!sourceTab || !targetTab) {
-        return `❌ Invalid Rank: ${oldRank} -> ${newRank}`;
+        return `Invalid Rank: ${oldRank} -> ${newRank}`;
     }
 
     try {
-        const sourceRange = `${sourceTab}!A1:Z300`;
-        const getRes = await sheets.spreadsheets.values.get({ spreadsheetId, range: sourceRange });
-        const rows = getRes.data.values || [];
+        // 1. Get Source Data (Recruits)
+        const sourceRes = await sheets.spreadsheets.values.get({ 
+            spreadsheetId, 
+            range: `${sourceTab}!A1:Z300` 
+        });
+        const sourceRows = sourceRes.data.values || [];
+        const userColIdx = cfg.SHEETS_MAP[sourceTab].userCol.charCodeAt(0) - 65;
         
-        const colMap = cfg.SHEETS_MAP[sourceTab];
-        const userColIdx = colMap.userCol.charCodeAt(0) - 65;
-        
-        const rowIndex = rows.findIndex(row => 
+        const sourceRowIndex = sourceRows.findIndex(row => 
             row[userColIdx] && row[userColIdx].toLowerCase() === robloxName.toLowerCase()
         );
 
-        if (rowIndex === -1) {
-            return `❌ User **${robloxName}** not found on **${sourceTab}**.`;
+        if (sourceRowIndex === -1) {
+            return `User **${robloxName}** not found on **${sourceTab}**.`;
         }
 
-        const userData = rows[rowIndex];
-        const rowNum = rowIndex + 1;
+        const userData = sourceRows[sourceRowIndex];
+        const sourceRowNum = sourceRowIndex + 1;
+        const joinDate = userData[3] || "01/01/2026"; // Column D
 
-        // 1. Update Discord Roles
+        // 2. Update Discord Roles
         await updateDiscordRoles(targetMember, oldRank, newRank);
 
-        // 2. Handle Logic based on Transfer Type
-        
+        let statusMessage = "";
+
         // CASE A: Phase 1 -> Phase 2 (Stay on RECRUITS)
         if (oldRank === "PLACEMENT PHASE ONE" && newRank === "PLACEMENT PHASE TWO") {
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${sourceTab}!C${rowNum}`,
+                range: `${sourceTab}!C${sourceRowNum}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [[newRank]] }
             });
+            statusMessage = `Updated rank to Phase 2 on RECRUITS.`;
         } 
         
-        // CASE B: Moving from RECRUITS to a Company
+        // CASE B: Moving from RECRUITS to a Company (Find N/A slot)
         else if (sourceTab === cfg.TABS.RECRUITS && sourceTab !== targetTab) {
-            // Append to New Sheet
-            await appendToTarget(sheets, spreadsheetId, targetTab, robloxName, newRank, userData);
-            // Wipe the Recruit Row (B=N/A, C=N/A, D=01/01/2026, E=0, F="", G=FALSE, H=0, I=FALSE)
+            
+            // 3. Find N/A slot in Target Company Sheet
+            const targetRes = await sheets.spreadsheets.values.get({ 
+                spreadsheetId, 
+                range: `${targetTab}!B1:B300` 
+            });
+            const targetRows = targetRes.data.values || [];
+            
+            // Find first row where Column B is "N/A"
+            const targetRowIndex = targetRows.findIndex(row => row[0] === "N/A");
+
+            if (targetRowIndex === -1) {
+                return `No empty "N/A" slots found on the **${targetTab}** sheet!`;
+            }
+
+            const targetRowNum = targetRowIndex + 1;
+
+            // 4. Fill the "N/A" slot in Company Sheet
+            // Format: [Name(B), Rank(C), Date(D)]
+            await sheets.spreadsheets.values.update({
+                spreadsheetId,
+                range: `${targetTab}!B${targetRowNum}:D${targetRowNum}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[robloxName, newRank, joinDate]] }
+            });
+
+            // 5. Wipe the Recruit Row
             const wipeRow = ["N/A", "N/A", "01/01/2026", "0", "", "FALSE", "0", "FALSE"];
             await sheets.spreadsheets.values.update({
                 spreadsheetId,
-                range: `${sourceTab}!B${rowNum}:I${rowNum}`,
+                range: `${sourceTab}!B${sourceRowNum}:I${sourceRowNum}`,
                 valueInputOption: 'USER_ENTERED',
                 requestBody: { values: [wipeRow] }
             });
+
+            statusMessage = `Transferred to **${targetTab}** (Slot ${targetRowNum}) and wiped Recruit data.`;
         }
 
-        return `✅ Successfully ranked **${robloxName}** to **${newRank}**.`;
+        // 6. LOG TO DISCORD CHANNEL
+        if (logChannel) {
+            const embed = new EmbedBuilder()
+                .setTitle("Rank Change Log")
+                .setColor(0x2f3136)
+                .addFields(
+                    { name: "User", value: `${targetMember} (${robloxName})`, inline: true },
+                    { name: "Transfer", value: `${oldRank} -> ${newRank}`, inline: true },
+                    { name: "Status", value: statusMessage }
+                )
+                .setTimestamp();
+            
+            await logChannel.send({ embeds: [embed] });
+        }
+
+        return `Successfully ranked **${robloxName}** to **${newRank}**.`;
 
     } catch (err) {
         console.error(err);
-        return `❌ Error: ${err.message}`;
+        return `Error: ${err.message}`;
     }
-}
-
-async function appendToTarget(sheets, spreadsheetId, targetTab, name, rank, oldData) {
-    const originalDate = oldData[3] || "N/A"; // Column D (Index 3)
-    // Row Format for Companies: [ID(A), Name(B), Rank(C), Date(D), ...rest]
-    const newRow = ["", name, rank, originalDate];
-
-    await sheets.spreadsheets.values.append({
-        spreadsheetId,
-        range: `${targetTab}!A1`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [newRow] }
-    });
 }
 
 async function updateDiscordRoles(member, oldRank, newRank) {
     const r = newRank.toUpperCase();
 
-    // 1. Phase 1 -> Phase 2
     if (r === "PLACEMENT PHASE TWO") {
-        await member.roles.add("1498050747240284287"); // Phase 2
-        await member.roles.remove("1498050747240284286"); // Phase 1
+        await member.roles.add("1498050747240284287"); 
+        await member.roles.remove("1498050747240284286");
     }
 
-    // 2. Company Transfers
     const removals = ["1498050747240284290", "1498050747240284287", "1498050747240284285"];
 
     if (r === "SNOWTROOPER") {
