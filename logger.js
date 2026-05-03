@@ -147,9 +147,13 @@ async function updateUserWithCache(sheets, spreadsheetId, username, eventType, c
                 }
             } else {
                 // General Event Hosting
-                if ([cfg.TABS.STAFF, cfg.TABS.HIGH_COM].includes(tabName)) {
+                if (tabName === cfg.TABS.STAFF) {
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', basePts));
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'H', basePts));
+                } else if (tabName === cfg.TABS.HIGH_COM) {
+                    // Fix applied here: High Command gets E & F instead of F & H for normal events
+                    tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', basePts));
+                    tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', basePts));
                 }
             }
         } 
