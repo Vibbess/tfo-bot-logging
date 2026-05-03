@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { EmbedBuilder } = require('discord.js'); // Add this line
 const cfg = require('./config');
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
@@ -104,12 +105,28 @@ async function processLog(auth, spreadsheetId, command, input) {
         } catch (e) { sheetCache[tabName] = []; }
     }
 
-    const reportEntries = [];
+const reportEntries = [];
     for (const user of uniqueUsers) {
         const res = await updateUserWithCache(sheets, spreadsheetId, user.name, eventType, { ...data, role: user.role }, sheetCache);
         reportEntries.push(res);
     }
-    return reportEntries.join('\n');
+
+    // --- NEW EMBED LOGGING LOGIC ---
+    const embed = new EmbedBuilder()
+        .setTitle(command === "timelog" ? "Time Log added" : "Event Log added")
+        .setColor(0x2f3136)
+        .addFields(
+            { name: "Host / User", value: `**${data.host || "N/A"}**`, inline: true },
+            { name: "Event / Type", value: `**${command === "timelog" ? "In-game Time" : eventType}**`, inline: true },
+            { 
+                name: "Summary of Changes", 
+                value: reportEntries.join('\n').slice(0, 1024) || "No users were updated on the sheets." 
+            }
+        )
+        .setFooter({ text: `Weekend Bonus: ${data.isWeekend ? "Active" : "Inactive"}` })
+        .setTimestamp();
+
+    return { embeds: [embed] }; // Returns the embed object for index.js to send
 }
 
 async function updateUserWithCache(sheets, spreadsheetId, username, eventType, context, cache) {

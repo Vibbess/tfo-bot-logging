@@ -294,45 +294,83 @@ if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') 
 
     try {
         if (commandName === 'bgc') {
-            const res = options.getString('result');
+            const result = options.getString('result');
+            const robloxId = options.getString('robloxuserid');
             const target = options.getUser('discorduser');
             const targetMember = await guild.members.fetch(target.id);
 
-            if (res === 'pass') {
+            if (result === 'pass') {
+                // 1. Update Discord Roles
                 await targetMember.roles.add(cfg.GENERAL_ROLES.BGC_PASS);
                 await targetMember.roles.remove(cfg.GENERAL_ROLES.BGC_REMOVE);
                 
+                // 2. Send Welcome Message
                 const welcomeMsg = `<@${target.id}>\n>\n> :SnowTrooper:  | **WELCOME TO THE FIRST ORDER SNOWTROOPER!**\n>\n> Please ensure to inspect all the channels that follow:\n>\n> https://discord.com/channels/1498050747101610165/1498050749215674550 - Recruit Information.\n> https://discord.com/channels/1498050747101610165/1498050750050336775 - Documents.\n> https://discord.com/channels/1498050747101610165/1498050750050336768 - Rules.\n> https://discord.com/channels/1498050747101610165/1498050750050336773 - FAQ.\n>\n> -# Signed, Snowtrooper Officer team`;
-                
                 await guild.channels.cache.get(cfg.WELCOME_CHANNEL).send(welcomeMsg);
-                if (logChannel) logChannel.send(`**BGC Passed:** <@${target.id}> by <@${user.id}>`);
-                await interaction.editReply(`Background check passed for <@${target.id}>.`);
+
+                // 3. LOG TO DISCORD (Embed)
+                if (logChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle("Background Check: Passed")
+                        .setColor(0x2f3136)
+                        .addFields(
+                            { name: "User", value: `${targetMember} (${robloxId})`, inline: true },
+                            { name: "Officer", value: `<@${user.id}>`, inline: true },
+                            { name: "Outcome", value: "Added to Recruits", inline: false }
+                        )
+                        .setTimestamp();
+                    await logChannel.send({ embeds: [embed] });
+                }
+                await interaction.editReply(`Background check **passed** for <@${target.id}>.`);
+
             } else {
-                if (logChannel) logChannel.send(`**BGC Failed:** <@${target.id}> by <@${user.id}>`);
-                await interaction.editReply("Background check marked as Fail.");
+                // BGC FAIL LOGIC
+                if (logChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle("Background Check: Failed")
+                        .setColor(0xFF0000) // Red for failure
+                        .addFields(
+                            { name: "User", value: `${targetMember} (${robloxId})`, inline: true },
+                            { name: "Officer", value: `<@${user.id}>`, inline: true },
+                            { name: "Outcome", value: "BGC Failed", inline: false }
+                        )
+                        .setTimestamp();
+                    await logChannel.send({ embeds: [embed] });
+                }
+                await interaction.editReply("Background check marked as **Fail**.");
             }
 
 } else if (commandName === 'inactivitynotice') {
-    const target = options.getUser('discorduser');
-    const robloxName = options.getString('robloxusername');
-    const duration = options.getString('duration');
-    const targetMember = await guild.members.fetch(target.id);
+                const target = options.getUser('discorduser');
+                const robloxName = options.getString('robloxusername');
+                const duration = options.getString('duration');
+                const targetMember = await guild.members.fetch(target.id);
 
-    // 1. Add the Discord Role
-    try {
-        await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
-    } catch (err) {
-        console.error("Failed to add role:", err);
-        // Continues to sheet update even if role assignment fails
-    }
-    
-    // 2. Update the Spreadsheet
-    const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
-    
-    if (logChannel) {
-        logChannel.send(`**Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
-    }
-    await interaction.editReply(`Notice issued to **${robloxName}**.\n> ${sheetResult}`);
+                // 1. Add the Discord Role
+                try {
+                    await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
+                } catch (err) {
+                    console.error("Failed to add role:", err);
+                }
+                
+                // 2. Update the Spreadsheet
+                const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
+                
+                // 3. LOG TO DISCORD CHANNEL (Formatted Embed)
+                if (logChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle("Inactivity Notice Log")
+                        .setColor(0x2f3136)
+                        .addFields(
+                            { name: "User", value: `${targetMember} (${robloxName})`, inline: true },
+                            { name: "Duration", value: `${duration === 'one' ? '1 Reset' : '2 Resets'}`, inline: true },
+                            { name: "Status", value: sheetResult }
+                        )
+                        .setTimestamp();
+
+                    await logChannel.send({ embeds: [embed] });
+                }
+                await interaction.editReply(`Notice issued to **${robloxName}**.\n> ${sheetResult}`);
 
 
         } else if (commandName === 'rank') {
