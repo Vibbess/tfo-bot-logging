@@ -191,15 +191,15 @@ async function runQuotaReset(auth, spreadsheetId, client, interaction) {
 
     // 4. Construct the Embed Report
     const embed = new EmbedBuilder()
-        .setTitle("📊 Weekly Quota Reset Report")
+        .setTitle("Weekly Quota Reset Report")
         .setColor(0x3498db)
         .setDescription(`**Snowtrooper Maestro (Top Company):** ${topComp}\n**Personnel of the Week:** ${stats.topPersonnel.name} (${stats.topPersonnel.score} events)\n**Officer of the Week:** ${stats.topOfficer.name} (${stats.topOfficer.score} events/tryouts)`)
         .addFields(
-            { name: "✅ Passed Quota", value: formatList(lists.passed) },
-            { name: "⚠️ Failed Once (+1 Strike)", value: formatList(lists.failedOnce) },
-            { name: "❌ Failed Twice (Needs Removal)", value: formatList(lists.failedTwice) },
-            { name: "🕒 Expired INs Removed", value: formatList(lists.inRemoved) },
-            { name: "🎓 Recruits Passed (Needs Promoing)", value: formatList(lists.recruitsReady) }
+            { name: "Passed Quota", value: formatList(lists.passed) },
+            { name: "Failed Once (+1 Strike)", value: formatList(lists.failedOnce) },
+            { name: "Failed Twice (Needs Removal)", value: formatList(lists.failedTwice) },
+            { name: "Expired INs Removed", value: formatList(lists.inRemoved) },
+            { name: "Recruits Need removed", value: formatList(lists.recruitsReady) }
         )
         .setTimestamp();
 
@@ -225,7 +225,7 @@ async function runQuotaReset(auth, spreadsheetId, client, interaction) {
         if (ch) ch.send(broadcastMsg).catch(() => {});
     }
 
-    return "✅ **Quota Reset Complete.** Logs have been distributed and sheets wiped.";
+    return "**Quota Reset Complete.**";
 }
 
 module.exports = { runQuotaReset };
