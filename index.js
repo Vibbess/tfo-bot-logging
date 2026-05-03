@@ -60,7 +60,6 @@ async function performDischarge(auth, spreadsheetId, robloxName) {
     const sheetsApi = google.sheets({ version: 'v4', auth });
     const sheetsToSearch = Object.values(cfg.TABS);
     
-    // 1. Find the user
     let foundSheet = null;
     let foundRowIndex = -1;
 
@@ -74,44 +73,43 @@ async function performDischarge(auth, spreadsheetId, robloxName) {
         
         if (idx !== -1) {
             foundSheet = sheetName;
-            foundRowIndex = idx + 1; // 1-based for A1 notation
+            foundRowIndex = idx + 1; 
             break;
         }
     }
 
     if (!foundSheet) return { success: false, msg: "User not found on any sheets." };
 
-    // 2. Prepare Wipe Data based on Sheet Type
     let range = "";
-    let values = [];
+    let rowData = []; // Changed to a 1D array to avoid nesting errors
 
     if (foundSheet === cfg.TABS.HIGH_COM) {
-        // B=N/A, D=01/01/2026, E-H=0
+        // B to H (7 cols): Name, Rank, Date, E, F, G, H
         range = `${foundSheet}!B${foundRowIndex}:H${foundRowIndex}`;
-        values = [["N/A", "", "01/01/2026", 0, 0, 0, 0]];
+        rowData = ["N/A", "", "01/01/2026", 0, 0, 0, 0];
     } 
     else if (foundSheet === cfg.TABS.STAFF) {
-        // B=N/A, E=01/01/2026, F-H=0, I=FALSE, J&K=0
+        // B to K (10 cols)
         range = `${foundSheet}!B${foundRowIndex}:K${foundRowIndex}`;
-        values = [["N/A", "", "", "01/01/2026", 0, 0, 0, "FALSE", 0, 0]];
+        rowData = ["N/A", "", "", "01/01/2026", 0, 0, 0, "FALSE", 0, 0];
     } 
     else if ([cfg.TABS.SNOWTROOPER, cfg.TABS.ICEGUARD, cfg.TABS.HAILSTORM].includes(foundSheet)) {
-        // B=N/A, D=01/01/2026, E-H=0, I=FALSE
+        // B to I (8 cols)
         range = `${foundSheet}!B${foundRowIndex}:I${foundRowIndex}`;
-        values = [["N/A", "", "01/01/2026", 0, 0, 0, 0, "FALSE"]];
+        rowData = ["N/A", "", "01/01/2026", 0, 0, 0, 0, "FALSE"];
     } 
     else if (foundSheet === cfg.TABS.RECRUITS) {
-        // B=N/A, C=N/A, D=01/01/2026, E=0, F&G=FALSE, H=0
+        // B to H (7 cols)
         range = `${foundSheet}!B${foundRowIndex}:H${foundRowIndex}`;
-        values = [["N/A", "N/A", "01/01/2026", 0, "FALSE", "FALSE", 0]];
+        rowData = ["N/A", "N/A", "01/01/2026", 0, "FALSE", "FALSE", 0];
     }
 
-    // 3. Execute Wipe
+    // CRITICAL FIX: We pass [rowData] so it's a clean 2D array [[val1, val2...]]
     await sheetsApi.spreadsheets.values.update({
         spreadsheetId,
         range,
         valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [values] }
+        requestBody: { values: [rowData] } 
     });
 
     return { success: true, msg: `Wiped data from **${foundSheet}**.` };
