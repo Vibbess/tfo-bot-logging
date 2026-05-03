@@ -56,6 +56,106 @@ async function getUserSheets(userId) {
     return auth;
 }
 
+// --- NEW HELPERS FOR INACTIVITY NOTICE ---
+function getNextSaturday(weeksAhead = 1) {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 = Sun, 1 = Mon, ..., 6 = Sat
+    const daysUntilNextSat = (6 - dayOfWeek + 7) % 7 || 7; // If today is Sat, get next Sat (7 days)
+    now.setDate(now.getDate() + daysUntilNextSat + (weeksAhead - 1) * 7);
+    
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+}
+
+async function issueInactivityNotice(auth, spreadsheetId, robloxName, duration) {
+    const sheetsApi = google.sheets({ version: 'v4', auth });
+    
+    // The specific sheets to search through
+    const sheetsToSearch = [
+        'RECRUITS', 
+        'SNOWTROOPER COMPANY', 
+        'ICEGUARD COMPANY', 
+        'HAILSTORM COMPANY', 
+        'DIVISIONAL STAFF', 
+        'HIGH COMMAND'
+    ];
+
+    // 1. Get spreadsheet metadata to map sheet names to their internal sheetIds
+    const meta = await sheetsApi.spreadsheets.get({ spreadsheetId });
+    const sheetMap = {};
+    meta.data.sheets.forEach(s => {
+        sheetMap[s.properties.title] = s.properties.sheetId;
+    });
+
+    let found = false;
+    let targetSheetName = '';
+    let targetRowIndex = -1;
+    let targetSheetId = null;
+
+    // 2. Search for the Roblox username across the sheets
+    for (const sheetName of sheetsToSearch) {
+        if (!sheetMap[sheetName]) continue; // Skip if sheet doesn't exist
+
+        const response = await sheetsApi.spreadsheets.values.get({
+            spreadsheetId,
+            range: `${sheetName}!A:D` // Assuming the username is somewhere in Columns A to D
+        });
+
+        const rows = response.data.values;
+        if (!rows) continue;
+
+        // Find the row containing the roblox username (case-insensitive)
+        const rowIndex = rows.findIndex(row => 
+            row.some(cell => typeof cell === 'string' && cell.toLowerCase() === robloxName.toLowerCase())
+        );
+
+        if (rowIndex !== -1) {
+            found = true;
+            targetSheetName = sheetName;
+            targetRowIndex = rowIndex; // 0-based index for batchUpdate
+            targetSheetId = sheetMap[sheetName];
+            break;
+        }
+    }
+
+    if (!found) {
+        return `Could not find **${robloxName}** in any of the expected division sheets.`;
+    }
+
+    // 3. Calculate Due Date based on duration ('one' or 'two' resets)
+    const weeksAhead = duration === 'one' ? 1 : 2;
+    const dueDate = getNextSaturday(weeksAhead);
+
+    // 4. Update Column I (Index 8) to be TRUE and add the note
+    const requests = [{
+        updateCells: {
+            range: {
+                sheetId: targetSheetId,
+                startRowIndex: targetRowIndex,
+                endRowIndex: targetRowIndex + 1,
+                startColumnIndex: 8, // Column I
+                endColumnIndex: 9
+            },
+            rows: [{
+                values: [{
+                    userEnteredValue: { boolValue: true }, // Checks the box
+                    note: `Due Date: ${dueDate}` // Adds the note
+                }]
+            }],
+            fields: 'userEnteredValue,note'
+        }
+    }];
+
+    await sheetsApi.spreadsheets.batchUpdate({
+        spreadsheetId,
+        resource: { requests }
+    });
+
+    return `Found in **${targetSheetName}**. Inactivity notice logged for **${dueDate}**.`;
+}
+
 // --- COMMAND DEFINITIONS ---
 const commands = [
     new SlashCommandBuilder().setName('authorize').setDescription('Authorize a user for a specific command')
@@ -210,7 +310,6 @@ if (interaction.isAutocomplete()) {
                 await interaction.editReply("Background check marked as Fail.");
             }
 
-// Inside index.js interaction handler:
 } else if (commandName === 'inactivitynotice') {
     const target = options.getUser('discorduser');
     const robloxName = options.getString('robloxusername');
@@ -218,15 +317,20 @@ if (interaction.isAutocomplete()) {
     const targetMember = await guild.members.fetch(target.id);
 
     // 1. Add the Discord Role
-    await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
+    try {
+        await targetMember.roles.add(cfg.GENERAL_ROLES.INACTIVITY_NOTICE);
+    } catch (err) {
+        console.error("Failed to add role:", err);
+        // Continues to sheet update even if role assignment fails
+    }
     
     // 2. Update the Spreadsheet
     const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
     
     if (logChannel) {
-        logChannel.send(`🕒 **Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
+        logChannel.send(`**Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
     }
-    await interaction.editReply(`✅ Notice issued to **${robloxName}**. ${sheetResult}`);
+    await interaction.editReply(`Notice issued to **${robloxName}**.\n> ${sheetResult}`);
 
 
         } else if (commandName === 'rank') {
