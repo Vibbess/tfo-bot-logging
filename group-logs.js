@@ -6,8 +6,7 @@ const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const CHECK_INTERVAL = 60000; 
 
 const groupConfigs = [
-    { id: "35911460", channel: "1454635614220583056", threshold: 1 },
-    { id: "35911445", channel: "1489104446272180284", threshold: 1 },
+    { id: "1061251193", channel: "1498050754559082692", threshold: 1 },
 ];
 
 const cache = new Map(); 
@@ -71,7 +70,7 @@ function createEmbed(type, user, oldRank, newRank, groupId) {
             { name: "Old Rank", value: oldRank || "Guest/Below Threshold", inline: false },
             { name: "New Rank", value: newRank || "Left/Below Threshold", inline: false }
         )
-        .setFooter({ text: "Group Logs - by FN Corps Bot | Vibbes_1" })
+        .setFooter({ text: "Group Logs - by Vibbes_1" })
         .setTimestamp();
 }
 

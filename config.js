@@ -1,24 +1,23 @@
 module.exports = {
     // --- SERVER & LOGGING ---
-    GUILD_ID: "1369082109184053469",
-    LOG_CHANNEL: "1447366711476228236",
-    WELCOME_CHANNEL: "1404225235007570040",
-    JET_WELCOME_CHANNEL: "1468756387562782732",
+    GUILD_ID: "1498050747101610165",
+    LOG_CHANNEL: "1498050754135461938",
+    WELCOME_CHANNEL: "1498050750528491546",
 
     // --- PERMISSION ROLES ---
     PERMS: {
-        AUTHORIZE_ROLE: "1369082109184053474", // Can run /authorize
-        LOGGING_ROLE: "1369082109184053473",   // Can run /timelog, /eventlog
-        HIGH_COMMAND_ROLE: "1443391465387720914" // Can run everything
+        AUTHORIZE_ROLE: "1498050747433222416", // Can run /authorize
+        LOGGING_ROLE: "1498050747399409707",   // Can run /timelog, /eventlog
+        HIGH_COMMAND_ROLE: "1498050747399409709" // Can run everything
     },
 
     // --- GENERAL ROLES ---
     GENERAL_ROLES: {
         BGC_REMOVE: "1386742728485900348",
-        BGC_PASS: ["1399091736856236053", "1443766165536247808", "1378869378178879578"],
-        PHASE_TWO: "1443766259995901952",
-        PHASE_ONE_REMOVE: "1443766165536247808",
-        INACTIVITY_NOTICE: "1403895214958972999"
+        BGC_PASS: ["1498050747240284290", "1498050747399409712", "1498050747240284285", "1498050747181437117"],
+        PHASE_TWO: "1498050747240284287",
+        PHASE_ONE_REMOVE: "1498050747240284286",
+        INACTIVITY_NOTICE: "1498050747399409712"
     },
 
     // --- JETPACK COMPANY LINE ---
@@ -54,10 +53,10 @@ module.exports = {
     // --- SHEET COLUMN CONFIG ---
     SHEETS_MAP: {
 // Change this line in config.js:
-        "PLACEMENT": { userCol: 'B', scoreCol: 'A', phaseCol: 'C', inactCol: 'G' },
         "RECRUITS": { userCol: 'B', rankCol: 'C', dateCol: 'D', ptsCol: 'E', ptCol: 'F', inactCol: 'H' },
-        "JETPACK COMPANY": { userCol: 'B', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
-        "FLAMETROOPER COMPANY": { userCol: 'B', rankCol: 'C', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
+        "SNOWTROOPER COMPANY": { userCol: 'B', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
+        "ICEGUARD COMPANY": { userCol: 'B', rankCol: 'C', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
+        "HAILSTORM COMPANY": { userCol: 'B', rankCol: 'C', dateCol: 'D', eCol: 'E', fCol: 'F', timeCol: 'G', inactCol: 'I' },
         "DIVISIONAL STAFF": { inactCol: 'J' },
         "HIGH COMMAND": { inactCol: 'I' }
     }

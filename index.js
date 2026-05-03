@@ -115,14 +115,14 @@ if (interaction.isAutocomplete()) {
         const focusedOption = interaction.options.getFocused(true);
         let choices = [];
 
-// Inside index.js -> interactionCreate
-if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
-    choices = [
-        'PHASE 1', 'PHASE 2', 
-        'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
-        'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL'
-    ];
-}
+        if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
+            choices = [
+                'PLACEMENT', 'PVT', 'RECRUIT', 
+                'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
+                'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL',
+                'PHASE 2'
+            ];
+        }
 
         const filtered = choices
             .filter(choice => choice.startsWith(focusedOption.value.toUpperCase()))
@@ -224,9 +224,9 @@ if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') 
     const sheetResult = await issueInactivityNotice(auth, SHEET_ID, robloxName, duration);
     
     if (logChannel) {
-        logChannel.send(`**Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
+        logChannel.send(`🕒 **Inactivity Notice:** <@${target.id}> (${robloxName})\n**Duration:** ${duration} reset(s)\n**Sheet Status:** ${sheetResult}`);
     }
-    await interaction.editReply(`Notice issued to **${robloxName}**. ${sheetResult}`);
+    await interaction.editReply(`✅ Notice issued to **${robloxName}**. ${sheetResult}`);
 
 
         } else if (commandName === 'rank') {
