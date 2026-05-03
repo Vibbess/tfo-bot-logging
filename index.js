@@ -15,6 +15,7 @@ const fs = require('fs');
 const cfg = require('./config');
 const { transferUser } = require('./ranker');
 const { processLog } = require('./logger');
+const { runQuotaReset } = require('./quotareset');
 
 // --- SETUP ---
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -260,6 +261,9 @@ new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank 
     new SlashCommandBuilder().setName('timelog').setDescription('Log in-game time')
         .addStringOption(o => o.setName('input').setDescription('Log text').setRequired(true)),
 
+        new SlashCommandBuilder().setName('quotareset')
+        .setDescription('Resets weekly quota, assigns strikes, etc (High Command Only)'),
+
     new SlashCommandBuilder().setName('inactivitynotice').setDescription('Issue an inactivity notice')
         .addUserOption(o => o.setName('discorduser').setDescription('Discord User').setRequired(true))
         .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
@@ -407,6 +411,14 @@ if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') 
                 }
                 await interaction.editReply("Background check marked as **Fail**.");
             }
+
+            } else if (commandName === 'quotareset') {
+                if (!isHighCommand) return interaction.editReply("You must be High Command to execute a quota reset.");
+                
+                await interaction.editReply("Processing quota reset. This may take a moment.");
+                
+                const resultMsg = await runQuotaReset(auth, SHEET_ID, client, interaction);
+                await interaction.editReply(resultMsg);
 
 } else if (commandName === 'inactivitynotice') {
                 const target = options.getUser('discorduser');
