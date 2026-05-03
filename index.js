@@ -56,6 +56,67 @@ async function getUserSheets(userId) {
     return auth;
 }
 
+async function performDischarge(auth, spreadsheetId, robloxName) {
+    const sheetsApi = google.sheets({ version: 'v4', auth });
+    const sheetsToSearch = Object.values(cfg.TABS);
+    
+    // 1. Find the user
+    let foundSheet = null;
+    let foundRowIndex = -1;
+
+    for (const sheetName of sheetsToSearch) {
+        const res = await sheetsApi.spreadsheets.values.get({
+            spreadsheetId,
+            range: `${sheetName}!A:D`
+        });
+        const rows = res.data.values || [];
+        const idx = rows.findIndex(row => row.some(cell => cell?.toLowerCase() === robloxName.toLowerCase()));
+        
+        if (idx !== -1) {
+            foundSheet = sheetName;
+            foundRowIndex = idx + 1; // 1-based for A1 notation
+            break;
+        }
+    }
+
+    if (!foundSheet) return { success: false, msg: "User not found on any sheets." };
+
+    // 2. Prepare Wipe Data based on Sheet Type
+    let range = "";
+    let values = [];
+
+    if (foundSheet === cfg.TABS.HIGH_COM) {
+        // B=N/A, D=01/01/2026, E-H=0
+        range = `${foundSheet}!B${foundRowIndex}:H${foundRowIndex}`;
+        values = [["N/A", "", "01/01/2026", 0, 0, 0, 0]];
+    } 
+    else if (foundSheet === cfg.TABS.STAFF) {
+        // B=N/A, E=01/01/2026, F-H=0, I=FALSE, J&K=0
+        range = `${foundSheet}!B${foundRowIndex}:K${foundRowIndex}`;
+        values = [["N/A", "", "", "01/01/2026", 0, 0, 0, "FALSE", 0, 0]];
+    } 
+    else if ([cfg.TABS.SNOWTROOPER, cfg.TABS.ICEGUARD, cfg.TABS.HAILSTORM].includes(foundSheet)) {
+        // B=N/A, D=01/01/2026, E-H=0, I=FALSE
+        range = `${foundSheet}!B${foundRowIndex}:I${foundRowIndex}`;
+        values = [["N/A", "", "01/01/2026", 0, 0, 0, 0, "FALSE"]];
+    } 
+    else if (foundSheet === cfg.TABS.RECRUITS) {
+        // B=N/A, C=N/A, D=01/01/2026, E=0, F&G=FALSE, H=0
+        range = `${foundSheet}!B${foundRowIndex}:H${foundRowIndex}`;
+        values = [["N/A", "N/A", "01/01/2026", 0, "FALSE", "FALSE", 0]];
+    }
+
+    // 3. Execute Wipe
+    await sheetsApi.spreadsheets.values.update({
+        spreadsheetId,
+        range,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [values] }
+    });
+
+    return { success: true, msg: `Wiped data from **${foundSheet}**.` };
+}
+
 // --- NEW HELPERS FOR INACTIVITY NOTICE ---
 function getNextSaturday(weeksAhead = 1) {
     const now = new Date();
@@ -205,7 +266,16 @@ new SlashCommandBuilder().setName('rank').setDescription('Change a user\'s rank 
         .addUserOption(o => o.setName('discorduser').setDescription('Discord User').setRequired(true))
         .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
         .addStringOption(o => o.setName('duration').setDescription('Notice length').setRequired(true)
-            .addChoices({name: 'One Reset (Next Sat)', value: 'one'}, {name: 'Two Resets (Following Sat)', value: 'two'}))
+            .addChoices({name: 'One Reset (Next Sat)', value: 'one'}, {name: 'Two Resets (Following Sat)', value: 'two'})),
+            new SlashCommandBuilder().setName('discharge').setDescription('Discharge a user and wipe their sheet data')
+        .addStringOption(o => o.setName('robloxusername').setDescription('Roblox Username').setRequired(true))
+        .addUserOption(o => o.setName('discorduser').setDescription('Discord User to kick').setRequired(true))
+        .addStringOption(o => o.setName('reason').setDescription('Reason for discharge').setRequired(true)
+            .addChoices(
+                { name: 'Quota Fail', value: 'Quota Fail' },
+                { name: 'Removal', value: 'Removal' },
+                { name: 'Discharge', value: 'Discharge' }
+            )),
 ].map(cmd => cmd.toJSON());
 
 
@@ -371,6 +441,44 @@ if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') 
                     await logChannel.send({ embeds: [embed] });
                 }
                 await interaction.editReply(`Notice issued to **${robloxName}**.\n> ${sheetResult}`);
+
+                } else if (commandName === 'discharge') {
+    const robloxName = options.getString('robloxusername');
+    const targetUser = options.getUser('discorduser');
+    const reason = options.getString('reason');
+    const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+
+    // 1. Update Sheets
+    const sheetResult = await performDischarge(auth, SHEET_ID, robloxName);
+    
+    // 2. Kick from Discord
+    let kickStatus = "User not in server.";
+    if (targetMember) {
+        try {
+            await targetMember.kick(`Discharged by ${user.tag}: ${reason}`);
+            kickStatus = "Successfully kicked.";
+        } catch (err) {
+            kickStatus = "Failed to kick (Check bot permissions).";
+        }
+    }
+
+    // 3. Log to Discord Embed
+    if (logChannel) {
+        const embed = new EmbedBuilder()
+            .setTitle(" Discharge Log")
+            .setColor(0x000000) // Black for discharge
+            .addFields(
+                { name: "User", value: `${targetUser.tag} (${robloxName})`, inline: true },
+                { name: "Reason", value: reason, inline: true },
+                { name: "Sheet Action", value: sheetResult.msg, inline: false },
+                { name: "Discord Action", value: kickStatus, inline: false }
+            )
+            .setTimestamp();
+        
+        await logChannel.send({ embeds: [embed] });
+    }
+
+    await interaction.editReply(`**Discharge Processed:**\n> **Sheets:** ${sheetResult.msg}\n> **Discord:** ${kickStatus}`);
 
 
         } else if (commandName === 'rank') {
