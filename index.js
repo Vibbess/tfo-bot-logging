@@ -200,7 +200,7 @@ if (interaction.isAutocomplete()) {
                 await targetMember.roles.add(cfg.GENERAL_ROLES.BGC_PASS);
                 await targetMember.roles.remove(cfg.GENERAL_ROLES.BGC_REMOVE);
                 
-                const welcomeMsg = `<@${target.id}>\n>\n> <:FNTC:1443781891349155890>  | **WELCOME TO THE FN TROOPER CORPS!**\n>\n> Please ensure to inspect all the channels that follow:\n>\n> https://discord.com/channels/1369082109184053469/1403809864483995648 - Placement Information.\n> https://discord.com/channels/1369082109184053469/1443777053987049562 - Test scores.\n> https://discord.com/channels/1369082109184053469/1369082110006267988 - Rules.\n> https://discord.com/channels/1369082109184053469/1443405151149752452 - FAQ.\n>\n> -# Signed, FN Trooper Corps Officer Team`;
+                const welcomeMsg = `<@${target.id}>\n>\n> :SnowTrooper:  | **WELCOME TO THE FIRST ORDER SNOWTROOPER!**\n>\n> Please ensure to inspect all the channels that follow:\n>\n> https://discord.com/channels/1498050747101610165/1498050749215674550 - Recruit Information.\n> https://discord.com/channels/1498050747101610165/1498050750050336775 - Documents.\n> https://discord.com/channels/1498050747101610165/1498050750050336768 - Rules.\n> https://discord.com/channels/1498050747101610165/1498050750050336773 - FAQ.\n>\n> -# Signed, Snowtrooper Officer team`;
                 
                 await guild.channels.cache.get(cfg.WELCOME_CHANNEL).send(welcomeMsg);
                 if (logChannel) logChannel.send(`**BGC Passed:** <@${target.id}> by <@${user.id}>`);
