@@ -215,14 +215,16 @@ if (interaction.isAutocomplete()) {
         const focusedOption = interaction.options.getFocused(true);
         let choices = [];
 
-        if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
-            choices = [
-                'PLACEMENT', 'PVT', 'RECRUIT', 
-                'JET RECRUIT', 'JET TROOPER', 'JET SENIOR', 'JET VETERAN', 'JET SPECIALIST', 'JET CORPORAL',
-                'FLAME RECRUIT', 'FLAME TROOPER', 'FLAME SENIOR', 'FLAME VETERAN', 'FLAME SPECIALIST', 'FLAME CORPORAL',
-                'PHASE 2'
-            ];
-        }
+// Inside interactionCreate for isAutocomplete()
+if (focusedOption.name === 'current_rank' || focusedOption.name === 'new_rank') {
+    choices = [
+        'PLACEMENT PHASE ONE', 
+        'PLACEMENT PHASE TWO', 
+        'SNOWTROOPER', 
+        'ICEGUARD TROOPER', 
+        'HAILSTORM TROOPER'
+    ];
+}
 
         const filtered = choices
             .filter(choice => choice.startsWith(focusedOption.value.toUpperCase()))

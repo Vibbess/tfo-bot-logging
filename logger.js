@@ -165,12 +165,12 @@ async function updateUserWithCache(sheets, spreadsheetId, username, eventType, c
                 if (eventType.toLowerCase().includes("patrol")) {
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', 1));
                 }
-                if (eventType.toLowerCase().includes("physical training") || eventType.toLowerCase().includes("pt")) {
+                if (eventType.toLowerCase().includes("general training") || eventType.toLowerCase().includes("pt")) {
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', "TRUE"));
                 }
             } 
             // Jetpack & Flametrooper Company rules
-            else if (tabName === cfg.TABS.JETPACK || tabName === cfg.TABS.FLAME) {
+            else if (tabName === cfg.TABS.SNOWTROOPER || tabName === cfg.TABS.ICEGUARD || tabName === cfg.TABS.HAILSTORM) {
                 if (context.role === 'Attendee') {
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'E', 1)); // Event Points E
                     tabChanges.push(await modCell(sheets, spreadsheetId, tabName, rowNum, 'F', 1)); // Event Points F
